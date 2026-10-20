@@ -26,12 +26,15 @@
     <div class="topbar__right"></div>
   </header>
 
+  <div class="theater-slot" id="theater-slot"></div>
   <div class="watch">
     <div class="watch__main">
-      <div class="player-wrap">
-        <video id="player" controls playsinline
+      <div class="player-wrap" id="player-wrap">
+        <video id="player" controls playsinline preload="auto"
                poster="/thumb/{{ video.id }}"
-               data-id="{{ video.id }}"
+               data-id="{{ video.id }}" data-title="{{ video.title }}"
+               {% if prev_vid %}data-prev="/watch/{{ prev_vid }}{{ '?list=' ~ playlist.id if playlist else '' }}"{% endif %}
+               {% if next_item %}data-next-title="{{ next_item.title }}" data-next-thumb="/thumb/{{ next_item.id }}"{% endif %}
                {% if next_vid %}data-next="/watch/{{ next_vid }}{{ '?list=' ~ playlist.id if playlist else '' }}"{% endif %}>
           <source src="/stream/{{ video.id }}" type="video/mp4">
           Your browser can't play this file.
@@ -88,5 +91,6 @@
   </div>
 
   <script src="{{ url_for('static', filename='script.js') }}"></script>
+  <script src="{{ url_for('static', filename='player.js') }}"></script>
 </body>
 </html>
