@@ -1,0 +1,10 @@
+# Local data: config with your folder paths, caches, thumbnails, transcodes
+data/
+config.json
+duration_cache.json
+thumbs/
+transcoded/
+progress_*.txt
+.builder/
+__pycache__/
+*.pyc

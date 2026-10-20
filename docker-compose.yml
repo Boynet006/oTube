@@ -1,0 +1,13 @@
+services:
+  otube:
+    build: .
+    container_name: otube
+    ports:
+      - "8700:8700"
+    volumes:
+      - ./data:/data
+      # Host video library -> /videos inside the container.
+      # Add folders in the UI as /videos/<subfolder>.
+      - "Q:/Old Drive 2/Videos:/videos"
+      - "C:/Users/al_ha/Desktop/mrRobotSongs:/media/mrRobotSongs"
+    restart: unless-stopped

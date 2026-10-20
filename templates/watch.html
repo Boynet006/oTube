@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ video.title }} — oTube</title>
+  <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar__left">
+      <a class="brand" href="/">
+        <svg class="brand__mark" viewBox="0 0 28 28" width="28" height="28" aria-hidden="true"><rect width="28" height="28" rx="7" fill="#ff0033"/><circle cx="14" cy="14" r="8.2" fill="none" stroke="#fff" stroke-width="2.8"/><path d="M12 10.6v6.8l5.4-3.4z" fill="#fff" stroke="#fff" stroke-width="1.2" stroke-linejoin="round"/></svg>
+        <span class="brand__text"><span class="brand__o">o</span>Tube</span>
+      </a>
+    </div>
+    <div class="topbar__search">
+      <form action="/" method="get" style="display:contents">
+        <input type="search" name="q" placeholder="Search" autocomplete="off">
+        <button type="submit" class="search-btn" aria-label="Search">
+          <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.6-.58 3.07-1.54 4.2l.27.3h.77l5 5-1.5 1.5-5-5v-.79l-.3-.27A6.5 6.5 0 1 1 9.5 3m0 2A4.5 4.5 0 1 0 14 9.5 4.5 4.5 0 0 0 9.5 5Z"/></svg>
+        </button>
+      </form>
+    </div>
+    <div class="topbar__right"></div>
+  </header>
+
+  <div class="watch">
+    <div class="watch__main">
+      <div class="player-wrap">
+        <video id="player" controls playsinline
+               poster="/thumb/{{ video.id }}"
+               data-id="{{ video.id }}"
+               {% if upnext %}data-next="/watch/{{ upnext[0].id }}"{% endif %}>
+          <source src="/stream/{{ video.id }}" type="video/mp4">
+          Your browser can't play this file.
+        </video>
+      </div>
+      <div class="watch__titlerow">
+        <h1 class="watch__title">{{ video.title }}</h1>
+        <button class="watch-more" title="More actions" aria-label="More actions"
+                data-id="{{ video.id }}" data-name="{{ video.title }}"
+                data-path="{{ video.path }}" data-watch="1">⋮</button>
+      </div>
+      <div class="watch__meta">
+        {{ video.duration }} · {{ video.size_h }}
+        {% if not video.native %}<span class="tag">transcoded ({{ video.ext[1:]|upper }})</span>{% endif %}
+        <span class="folder-tag">{{ video.folder }}</span>
+      </div>
+      <a class="back" href="/">← Back to all videos</a>
+    </div>
+
+    <aside class="watch__side">
+      <div class="side-head">Up next</div>
+      {% for v in upnext %}
+      <a class="up-item" href="/watch/{{ v.id }}">
+        <div class="up-thumb">
+          <img loading="lazy" src="/thumb/{{ v.id }}" alt="">
+          <span class="badge">{{ v.duration }}</span>
+        </div>
+        <div class="up-meta">
+          <div class="up-title">{{ v.title }}</div>
+          <div class="up-sub">{{ v.size_h }}</div>
+        </div>
+      </a>
+      {% endfor %}
+    </aside>
+  </div>
+
+  <div class="ctx-menu" id="ctx-menu" hidden>
+    <button data-act="reveal">Show in folder</button>
+    <button data-act="open">Open in player</button>
+    <button data-act="copy">Copy path</button>
+    <button data-act="rename">Rename…</button>
+    <button data-act="clear">Clear watch progress</button>
+    <button data-act="delete" class="danger">Delete from disk</button>
+  </div>
+
+  <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+.builder/
+data/
+thumbs/
+transcoded/
+progress_*.txt
+config.json
+duration_cache.json
+__pycache__/
+*.pyc
+otube.ico
+start-otube.*
