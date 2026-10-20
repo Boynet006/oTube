@@ -32,7 +32,7 @@
         <video id="player" controls playsinline
                poster="/thumb/{{ video.id }}"
                data-id="{{ video.id }}"
-               {% if upnext %}data-next="/watch/{{ upnext[0].id }}"{% endif %}>
+               {% if next_vid %}data-next="/watch/{{ next_vid }}{{ '?list=' ~ playlist.id if playlist else '' }}"{% endif %}>
           <source src="/stream/{{ video.id }}" type="video/mp4">
           Your browser can't play this file.
         </video>
@@ -48,13 +48,21 @@
         {% if not video.native %}<span class="tag">transcoded ({{ video.ext[1:]|upper }})</span>{% endif %}
         <span class="folder-tag">{{ video.folder }}</span>
       </div>
-      <a class="back" href="/">← Back to all videos</a>
+      {% if playlist %}<a class="back" href="/?playlist={{ playlist.id }}">← Back to {{ playlist.name }}</a>
+      {% else %}<a class="back" href="/">← Back to all videos</a>{% endif %}
     </div>
 
     <aside class="watch__side">
+      {% if playlist %}
+      <div class="side-head side-head--pl">
+        <a href="/?playlist={{ playlist.id }}">{{ playlist.name }}</a>
+        <span class="count">{{ pos + 1 }} / {{ upnext|length }}</span>
+      </div>
+      {% else %}
       <div class="side-head">Up next</div>
+      {% endif %}
       {% for v in upnext %}
-      <a class="up-item" href="/watch/{{ v.id }}">
+      <a class="up-item {{ 'current' if v.id == video.id }}" href="/watch/{{ v.id }}{{ '?list=' ~ playlist.id if playlist else '' }}">
         <div class="up-thumb">
           <img loading="lazy" src="/thumb/{{ v.id }}" alt="">
           <span class="badge">{{ v.duration }}</span>
@@ -69,6 +77,8 @@
   </div>
 
   <div class="ctx-menu" id="ctx-menu" hidden>
+    <button data-act="save">Save to playlist…</button>
+    <div class="ctx-sep"></div>
     <button data-act="reveal">Show in folder</button>
     <button data-act="open">Open in player</button>
     <button data-act="copy">Copy path</button>

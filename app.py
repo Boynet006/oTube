@@ -20,6 +20,7 @@ app = Flask(__name__)
 BASE = os.environ.get("OTUBE_DATA") or os.path.dirname(os.path.abspath(__file__))
 os.makedirs(BASE, exist_ok=True)
 CONFIG_PATH = os.path.join(BASE, "config.json")
+PLAYLISTS_PATH = os.path.join(BASE, "playlists.json")  # [{id, name, items: [vid, ...]}]
 DUR_CACHE_PATH = os.path.join(BASE, "duration_cache.json")  # persisted path -> [secs, mtime]
 THUMB_DIR = os.path.join(BASE, "thumbs")
 TRANS_DIR = os.path.join(BASE, "transcoded")  # cached browser-playable mp4s for mkv/avi/etc.
@@ -74,6 +75,24 @@ def load_config() -> dict:
 def save_config(cfg: dict) -> None:
     with open(CONFIG_PATH, "w", encoding="utf-8") as f:
         json.dump(cfg, f, indent=2)
+
+
+def load_playlists() -> list[dict]:
+    try:
+        with open(PLAYLISTS_PATH, "r", encoding="utf-8") as f:
+            pls = json.load(f)
+        return pls if isinstance(pls, list) else []
+    except Exception:
+        return []
+
+
+def save_playlists(pls: list[dict]) -> None:
+    with open(PLAYLISTS_PATH, "w", encoding="utf-8") as f:
+        json.dump(pls, f, indent=2)
+
+
+def find_playlist(pls: list[dict], pid: str) -> dict | None:
+    return next((p for p in pls if p.get("id") == pid), None)
 
 
 def vid_id(path: str) -> str:
@@ -220,22 +239,31 @@ def get_rec(vid: str) -> dict | None:
 @app.route("/")
 def index():
     cfg = load_config()
+    pls = load_playlists()
     videos = enrich(scan())
     folder = request.args.get("folder", "")
     sort = request.args.get("sort", "name")
-    if folder:
-        videos = [v for v in videos if v["folder"] == folder]
-    keys = {
-        "name": (lambda v: v["title"].lower(), False),
-        "newest": (lambda v: v["mtime"], True),
-        "size": (lambda v: v["size"], True),
-        "duration": (lambda v: v["dur_secs"], True),
-    }
-    keyfn, rev = keys.get(sort, keys["name"])
-    videos.sort(key=keyfn, reverse=rev)
+    playlist = find_playlist(pls, request.args.get("playlist", ""))
+    if playlist:
+        # Playlist order is the user's order; skip items whose file is gone.
+        by_id = {v["id"]: v for v in videos}
+        videos = [by_id[i] for i in playlist["items"] if i in by_id]
+        folder = ""
+    else:
+        if folder:
+            videos = [v for v in videos if v["folder"] == folder]
+        keys = {
+            "name": (lambda v: v["title"].lower(), False),
+            "newest": (lambda v: v["mtime"], True),
+            "size": (lambda v: v["size"], True),
+            "duration": (lambda v: v["dur_secs"], True),
+        }
+        keyfn, rev = keys.get(sort, keys["name"])
+        videos.sort(key=keyfn, reverse=rev)
     return render_template("index.html", videos=videos,
                            folders=cfg.get("video_folders", []),
-                           current_folder=folder, sort=sort)
+                           current_folder=folder, sort=sort,
+                           playlists=pls, playlist=playlist)
 
 
 @app.route("/watch/<vid>")
@@ -244,12 +272,24 @@ def watch(vid):
     if not r:
         abort(404)
     everything = enrich(scan())
-    same = [v for v in everything if v["folder"] == r["folder"] and v["id"] != vid]
-    other = [v for v in everything if v["folder"] != r["folder"]]
-    upnext = same + other
+    playlist = find_playlist(load_playlists(), request.args.get("list", ""))
+    if playlist and vid in playlist["items"]:
+        # Playing a playlist: the rail shows the whole list, "next" is the following item.
+        by_id = {v["id"]: v for v in everything}
+        items = [by_id[i] for i in playlist["items"] if i in by_id]
+        pos = next((n for n, v in enumerate(items) if v["id"] == vid), 0)
+        upnext = items
+        next_vid = items[pos + 1]["id"] if pos + 1 < len(items) else None
+    else:
+        playlist, pos = None, 0
+        same = [v for v in everything if v["folder"] == r["folder"] and v["id"] != vid]
+        other = [v for v in everything if v["folder"] != r["folder"]]
+        upnext = same + other
+        next_vid = upnext[0]["id"] if upnext else None
     d = probe_duration(r["path"])
     cur = {**r, "duration": fmt_duration(d), "size_h": fmt_size(r["size"])}
-    return render_template("watch.html", video=cur, upnext=upnext)
+    return render_template("watch.html", video=cur, upnext=upnext, next_vid=next_vid,
+                           playlist=playlist, pos=pos)
 
 
 def _live_stream(r: dict) -> Response:
@@ -498,6 +538,63 @@ def delete_video(vid):
         _clear_caches(vid)
     except OSError as exc:
         return {"ok": False, "error": str(exc)}, 500
+    return {"ok": True}
+
+
+# ---- Playlists (JSON API used by the "Save to playlist" dialog + playlist page) ----
+
+@app.route("/api/playlists")
+def api_playlists():
+    vid = request.args.get("vid", "")
+    return {"playlists": [{"id": p["id"], "name": p["name"], "count": len(p["items"]),
+                           "has": vid in p["items"]} for p in load_playlists()]}
+
+
+@app.route("/api/playlists", methods=["POST"])
+def api_playlist_create():
+    name = (request.form.get("name") or "").strip()[:100]
+    if not name:
+        return {"ok": False, "error": "empty name"}, 400
+    pls = load_playlists()
+    pl = {"id": os.urandom(5).hex(), "name": name, "items": []}
+    vid = request.form.get("vid")
+    if vid:
+        pl["items"].append(vid)
+    pls.append(pl)
+    save_playlists(pls)
+    return {"ok": True, "id": pl["id"]}
+
+
+@app.route("/api/playlists/<pid>/<action>", methods=["POST"])
+def api_playlist_action(pid, action):
+    pls = load_playlists()
+    pl = find_playlist(pls, pid)
+    if not pl:
+        return {"ok": False, "error": "no such playlist"}, 404
+    vid = request.form.get("vid", "")
+    items = pl["items"]
+    if action == "add":
+        if vid and vid not in items:
+            items.append(vid)
+    elif action == "remove":
+        if vid in items:
+            items.remove(vid)
+    elif action in ("up", "down"):
+        if vid in items:
+            i = items.index(vid)
+            j = i - 1 if action == "up" else i + 1
+            if 0 <= j < len(items):
+                items[i], items[j] = items[j], items[i]
+    elif action == "rename":
+        name = (request.form.get("name") or "").strip()[:100]
+        if not name:
+            return {"ok": False, "error": "empty name"}, 400
+        pl["name"] = name
+    elif action == "delete":
+        pls.remove(pl)
+    else:
+        return {"ok": False, "error": "unknown action"}, 400
+    save_playlists(pls)
     return {"ok": True}
 
 

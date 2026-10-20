@@ -318,7 +318,13 @@
       var card = current.card, isWatch = current.watch;
       closeMenu();
 
-      if (act === "copy") {
+      if (act === "save") {
+        openSaveDialog(id, name);
+      } else if (act === "pl-up" || act === "pl-down" || act === "pl-remove") {
+        var pid = grid && grid.getAttribute("data-playlist");
+        if (!pid) return;
+        plPost(pid, act.slice(3), { vid: id }).then(function () { location.reload(); });
+      } else if (act === "copy") {
         if (navigator.clipboard) navigator.clipboard.writeText(path);
       } else if (act === "reveal") {
         fetch("/reveal/" + id, { method: "POST" });
@@ -350,6 +356,116 @@
             .catch(function () { alert("Delete failed."); });
         }
       }
+    });
+  }
+
+  // --- Playlists ---
+  function plPost(pid, action, data) {
+    var fd = new FormData();
+    Object.keys(data || {}).forEach(function (k) { fd.append(k, data[k]); });
+    return fetch("/api/playlists/" + pid + "/" + action, { method: "POST", body: fd })
+      .then(function (r) { return r.json(); });
+  }
+  function plCreate(name, vid) {
+    var fd = new FormData(); fd.append("name", name);
+    if (vid) fd.append("vid", vid);
+    return fetch("/api/playlists", { method: "POST", body: fd }).then(function (r) { return r.json(); });
+  }
+  function esc(t) {
+    return String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+  }
+
+  // "Save to playlist" dialog: tick/untick playlists, or create a new one.
+  var saveModal = null, saveDirty = false;
+  function closeSave() {
+    saveModal.hidden = true;
+    if (saveDirty && document.getElementById("sidebar")) location.reload();  // refresh counts
+    saveDirty = false;
+  }
+  function openSaveDialog(vid, title) {
+    if (!saveModal) {
+      saveModal = document.createElement("div");
+      saveModal.className = "modal-overlay";
+      saveModal.innerHTML =
+        '<div class="modal modal--sm">' +
+        '<div class="modal__head"><span>Save to playlist</span>' +
+        '<button class="modal__close" data-close aria-label="Close">✕</button></div>' +
+        '<div class="pl-video"></div>' +
+        '<div class="pl-list"></div>' +
+        '<form class="pl-new"><input type="text" placeholder="New playlist name" maxlength="100">' +
+        '<button type="submit">Create</button></form></div>';
+      document.body.appendChild(saveModal);
+      saveModal.addEventListener("click", function (e) {
+        if (e.target === saveModal || e.target.closest("[data-close]")) closeSave();
+      });
+      document.addEventListener("keydown", function (e) {
+        if (e.key === "Escape" && saveModal && !saveModal.hidden) closeSave();
+      });
+    }
+    var list = saveModal.querySelector(".pl-list");
+    var form = saveModal.querySelector(".pl-new");
+    var input = form.querySelector("input");
+    saveModal.querySelector(".pl-video").textContent = title || "";
+    input.value = "";
+
+    function load() {
+      list.innerHTML = '<div class="browse-empty">Loading…</div>';
+      fetch("/api/playlists?vid=" + encodeURIComponent(vid))
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          var pls = d.playlists || [];
+          if (!pls.length) {
+            list.innerHTML = '<div class="browse-empty">No playlists yet. Create one below.</div>';
+            return;
+          }
+          list.innerHTML = "";
+          pls.forEach(function (p) {
+            var row = document.createElement("label");
+            row.className = "pl-row";
+            row.innerHTML = '<input type="checkbox"' + (p.has ? " checked" : "") + '>' +
+              '<span class="pl-name">' + esc(p.name) + '</span>' +
+              '<span class="pl-count">' + p.count + '</span>';
+            row.querySelector("input").addEventListener("change", function (e) {
+              saveDirty = true;
+              plPost(p.id, e.target.checked ? "add" : "remove", { vid: vid });
+            });
+            list.appendChild(row);
+          });
+        });
+    }
+    form.onsubmit = function (e) {
+      e.preventDefault();
+      var n = input.value.trim();
+      if (!n) return;
+      saveDirty = true;
+      plCreate(n, vid).then(function () { input.value = ""; load(); });
+    };
+    saveModal.hidden = false;
+    load();
+  }
+
+  var newPl = document.getElementById("new-playlist");
+  if (newPl) {
+    newPl.addEventListener("click", function () {
+      var n = window.prompt("New playlist name:");
+      if (n && n.trim()) plCreate(n.trim()).then(function (d) {
+        if (d.ok) location.href = "/?playlist=" + d.id;
+      });
+    });
+  }
+  var plRename = document.getElementById("pl-rename");
+  if (plRename) {
+    plRename.addEventListener("click", function () {
+      var n = window.prompt("Rename playlist:", plRename.getAttribute("data-name"));
+      if (n && n.trim()) plPost(plRename.getAttribute("data-pid"), "rename", { name: n.trim() })
+        .then(function () { location.reload(); });
+    });
+  }
+  var plDelete = document.getElementById("pl-delete");
+  if (plDelete) {
+    plDelete.addEventListener("click", function () {
+      if (window.confirm('Delete the playlist "' + plDelete.getAttribute("data-name") + '"?\n\nThe videos themselves are not touched.'))
+        plPost(plDelete.getAttribute("data-pid"), "delete").then(function () { location.href = "/"; });
     });
   }
 
