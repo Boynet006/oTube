@@ -426,7 +426,6 @@ a.shuffle-btn { text-decoration: none; }
 }
 .p-vol:hover .p-vol__range, .p-vol:focus-within .p-vol__range { width: 72px; opacity: 1; margin: 0 10px 0 4px; }
 .p video { transition: filter .15s; }
-.p-btn[data-a="bright"].on { color: #ffd54a; }
 .p-vol__range::-webkit-slider-thumb { -webkit-appearance: none; width: 13px; height: 13px; border-radius: 50%; background: #fff; border: none; }
 .p-vol__range::-moz-range-thumb { width: 13px; height: 13px; border-radius: 50%; background: #fff; border: none; }
 
@@ -444,7 +443,7 @@ a.shuffle-btn { text-decoration: none; }
   background: #ccc; transition: left .18s, background .18s; display: grid; place-items: center;
 }
 .p-switch.on .p-switch__track { background: var(--accent); }
-.p-switch.on .p-switch__knob { left: 18px; background: #fff; box-shadow: 0 0 0 2px var(--accent); }
+.p-switch.on .p-switch__knob { left: 18px; background: #fff; }
 
 /* scrubber */
 .p-scrub { position: relative; height: 16px; display: flex; align-items: center; cursor: pointer; touch-action: none; }

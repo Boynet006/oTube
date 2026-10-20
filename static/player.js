@@ -82,7 +82,7 @@
     '      </div>' +
     '      <div class="p-vol p-bright">' +
     '        <button type="button" class="p-btn" data-a="bright" title="Brightness (b / Shift+B)" aria-label="Brightness">' + I.sun + '</button>' +
-    '        <input type="range" class="p-vol__range p-bright__range" min="0.2" max="1" step="0.05" aria-label="Brightness">' +
+    '        <input type="range" class="p-vol__range p-bright__range" min="0" max="1" step="0.05" aria-label="Brightness">' +
     '      </div>' +
     '      <button type="button" class="p-time" data-a="time" title="Toggle remaining time"><span class="p-cur">0:00</span> / <span class="p-dur">0:00</span></button>' +
     '    </div>' +
@@ -282,16 +282,13 @@
   var brightRange = $(".p-bright__range");
   var lastDim = typeof prefs.lastDim === "number" ? prefs.lastDim : 0.6;
   function setBright(v, quiet) {
-    v = Math.min(1, Math.max(0.2, Math.round(v * 100) / 100));
+    v = Math.min(1, Math.max(0, Math.round(v * 100) / 100));
     prefs.bright = v;
     if (v < 1) { prefs.lastDim = lastDim = v; }
     savePrefs();
     video.style.filter = v < 1 ? "brightness(" + v + ")" : "";
     brightRange.value = v;
-    brightRange.style.setProperty("--fill", ((v - 0.2) / 0.8) * 100 + "%");
-    var b = btn("bright");
-    b.innerHTML = v < 1 ? I.moon : I.sun;
-    b.classList.toggle("on", v < 1);
+    brightRange.style.setProperty("--fill", v * 100 + "%");
     if (!quiet) toast("Brightness " + Math.round(v * 100) + "%");
   }
   brightRange.addEventListener("input", function () { setBright(+brightRange.value, true); });
@@ -452,7 +449,7 @@
       row("Loop", '<span class="p-mini-switch' + (video.loop ? " on" : "") + '"></span>', "loop") +
       row("Subtitles/CC", ccLabel + " " + I.chev, "cc-view") +
       row("Playback speed", rate + " " + I.chev, "speed-view") +
-      row("Brightness", Math.round((prefs.bright || 1) * 100) + "% " + I.chev, "bright-view") +
+      row("Brightness", Math.round((typeof prefs.bright === "number" ? prefs.bright : 1) * 100) + "% " + I.chev, "bright-view") +
       row("Keyboard shortcuts", I.chev, "keys");
   }
   function renderList(titleText, items, current, action) {
@@ -477,8 +474,8 @@
     else if (m === "cc-view") renderCCView();
     else if (m === "gen") { generateCaptions(); renderCCView(); }
     else if (m === "bright-view") renderList("Brightness",
-      [1, 0.85, 0.7, 0.55, 0.4, 0.25].map(function (v) { return { v: v, label: v === 1 ? "Normal" : Math.round(v * 100) + "%" }; }),
-      prefs.bright || 1, "bright");
+      [1, 0.8, 0.6, 0.4, 0.2, 0].map(function (v) { return { v: v, label: v === 1 ? "Normal" : Math.round(v * 100) + "%" }; }),
+      typeof prefs.bright === "number" ? prefs.bright : 1, "bright");
     else if (m === "bright") { setBright(+b.getAttribute("data-v")); closeMenu(); }
     else if (m === "speed") { setRate(+b.getAttribute("data-v")); closeMenu(); }
     else if (m === "cc") { setCC(+b.getAttribute("data-v")); closeMenu(); }
@@ -521,7 +518,7 @@
     else if (a === "prev") goPrev();
     else if (a === "next") goNext();
     else if (a === "mute") toggleMute();
-    else if (a === "bright") setBright((prefs.bright || 1) < 1 ? 1 : lastDim);
+    else if (a === "bright") setBright((typeof prefs.bright === "number" ? prefs.bright : 1) < 1 ? 1 : lastDim);
     else if (a === "cc") toggleCC();
     else if (a === "autoplay") toggleAutoplay();
     else if (a === "settings") { if (menu.hidden) openMenu(); else closeMenu(); }
@@ -622,8 +619,8 @@
     else if (k === "t") setTheater(!prefs.theater);
     else if (k === "i") toggleMini();
     else if (k === "c") toggleCC();
-    else if (k === "b") setBright((prefs.bright || 1) - 0.1);
-    else if (k === "B") setBright((prefs.bright || 1) + 0.1);
+    else if (k === "b") setBright((typeof prefs.bright === "number" ? prefs.bright : 1) - 0.1);
+    else if (k === "B") setBright((typeof prefs.bright === "number" ? prefs.bright : 1) + 0.1);
     else if (k === "N" && e.shiftKey) goNext();
     else if (k === "P" && e.shiftKey) goPrev();
     else if (k === ">") rateStep(1);
