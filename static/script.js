@@ -48,7 +48,16 @@
       var folder = sortSel.getAttribute("data-folder") || "";
       var url = "/?sort=" + encodeURIComponent(sortSel.value);
       if (folder) url += "&folder=" + encodeURIComponent(folder);
+      if (sortSel.value === "random") url += "&seed=" + Math.floor(Math.random() * 1e6);
       window.location.href = url;
+    });
+  }
+  var reshuffle = document.getElementById("reshuffle");
+  if (reshuffle) {
+    reshuffle.addEventListener("click", function () {
+      var u = new URL(location.href);
+      u.searchParams.set("seed", Math.floor(Math.random() * 1e6));
+      location.href = u.toString();
     });
   }
 
@@ -269,6 +278,82 @@
     });
   }
 
+  // --- Multi-select (Google Photos / Gmail style) ---
+  // Hover a card -> checkbox. Once anything is selected, clicking a card toggles it,
+  // Shift+click selects a range, Ctrl/Cmd+A selects all visible, Esc clears.
+  var selbar = document.getElementById("selbar");
+  if (grid && selbar) {
+    var selected = [], lastIdx = -1;
+    var countEl = document.getElementById("sel-count");
+    function visibleCards() {
+      return [].slice.call(grid.querySelectorAll(".card")).filter(function (c) { return c.style.display !== "none"; });
+    }
+    function sync() {
+      grid.classList.toggle("selecting", selected.length > 0);
+      selbar.hidden = selected.length === 0;
+      countEl.textContent = selected.length + " selected";
+      grid.querySelectorAll(".card").forEach(function (c) {
+        var on = selected.indexOf(c.getAttribute("data-id")) !== -1;
+        c.classList.toggle("selected", on);
+        var b = c.querySelector(".card__check");
+        if (b) b.setAttribute("aria-pressed", on ? "true" : "false");
+      });
+    }
+    function setSel(card, on) {
+      var id = card.getAttribute("data-id"), i = selected.indexOf(id);
+      if (on && i === -1) selected.push(id);
+      if (!on && i !== -1) selected.splice(i, 1);
+    }
+    function clearSel() { selected = []; lastIdx = -1; sync(); }
+    function toggleCard(card, shift) {
+      var cards = visibleCards(), idx = cards.indexOf(card);
+      var on = selected.indexOf(card.getAttribute("data-id")) === -1;
+      if (shift && lastIdx !== -1) {
+        var a = Math.min(lastIdx, idx), b = Math.max(lastIdx, idx);
+        for (var i = a; i <= b; i++) setSel(cards[i], true);
+      } else setSel(card, on);
+      lastIdx = idx;
+      sync();
+    }
+    grid.addEventListener("click", function (e) {
+      var card = e.target.closest(".card");
+      if (!card || e.target.closest(".card__more")) return;
+      if (e.target.closest(".card__check") || selected.length) {
+        e.preventDefault(); e.stopPropagation();
+        toggleCard(card, e.shiftKey);
+      }
+    }, true);
+    document.getElementById("sel-clear").addEventListener("click", clearSel);
+    document.getElementById("sel-all").addEventListener("click", function () {
+      visibleCards().forEach(function (c) { setSel(c, true); }); sync();
+    });
+    document.getElementById("sel-save").addEventListener("click", function () {
+      openSaveDialog(selected.slice(), "", function (msg) { note(msg + " (" + selected.length + " video" + (selected.length === 1 ? "" : "s") + ")"); });
+    });
+    var selRemove = document.getElementById("sel-remove");
+    if (selRemove) selRemove.addEventListener("click", function () {
+      var n = selected.length;
+      if (!window.confirm("Remove " + n + " video" + (n === 1 ? "" : "s") + " from this playlist?\n\nThe files themselves are not touched.")) return;
+      plPost(selRemove.getAttribute("data-pid"), "remove", { vid: selected }).then(function () { location.reload(); });
+    });
+    document.addEventListener("keydown", function (e) {
+      var t = e.target;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT")) return;
+      if (document.querySelector(".modal-overlay:not([hidden])")) return;
+      if (e.key === "Escape" && selected.length) { clearSel(); }
+      else if ((e.ctrlKey || e.metaKey) && (e.key === "a" || e.key === "A")) {
+        e.preventDefault();
+        visibleCards().forEach(function (c) { setSel(c, true); }); sync();
+      }
+    });
+    // Search filters cards: drop hidden ones from the selection
+    if (search) search.addEventListener("input", function () {
+      var vis = visibleCards().map(function (c) { return c.getAttribute("data-id"); });
+      selected = selected.filter(function (id) { return vis.indexOf(id) !== -1; });
+      sync();
+    });
+  }
+
   // --- Family / Private mode ---
   function postForm(url, data) {
     var fd = new FormData();
@@ -454,6 +539,8 @@
   function note(msg) {
     var t = document.getElementById("note-toast");
     if (!t) { t = document.createElement("div"); t.id = "note-toast"; t.className = "note-toast"; document.body.appendChild(t); }
+    var bar = document.getElementById("selbar");
+    t.classList.toggle("raised", !!(bar && !bar.hidden));  // sit above the selection bar
     t.textContent = msg; t.classList.add("show");
     clearTimeout(note._t); note._t = setTimeout(function () { t.classList.remove("show"); }, 3500);
   }
@@ -564,13 +651,15 @@
   // --- Playlists ---
   function plPost(pid, action, data) {
     var fd = new FormData();
-    Object.keys(data || {}).forEach(function (k) { fd.append(k, data[k]); });
+    Object.keys(data || {}).forEach(function (k) {
+      [].concat(data[k]).forEach(function (v) { fd.append(k, v); });  // arrays -> repeated fields
+    });
     return fetch("/api/playlists/" + pid + "/" + action, { method: "POST", body: fd })
       .then(function (r) { return r.json(); });
   }
   function plCreate(name, vid) {
     var fd = new FormData(); fd.append("name", name);
-    if (vid) fd.append("vid", vid);
+    [].concat(vid || []).forEach(function (v) { fd.append("vid", v); });
     return fetch("/api/playlists", { method: "POST", body: fd }).then(function (r) { return r.json(); });
   }
   function esc(t) {
@@ -584,7 +673,10 @@
     if (saveDirty && document.getElementById("sidebar")) location.reload();  // refresh counts
     saveDirty = false;
   }
-  function openSaveDialog(vid, title) {
+  // vids: one id or an array; title: label shown under the heading.
+  function openSaveDialog(vids, title, onDone) {
+    vids = [].concat(vids);
+    var n = vids.length;
     if (!saveModal) {
       saveModal = document.createElement("div");
       saveModal.className = "modal-overlay";
@@ -601,18 +693,19 @@
         if (e.target === saveModal || e.target.closest("[data-close]")) closeSave();
       });
       document.addEventListener("keydown", function (e) {
-        if (e.key === "Escape" && saveModal && !saveModal.hidden) closeSave();
-      });
+        if (e.key === "Escape" && saveModal && !saveModal.hidden) { e.stopImmediatePropagation(); closeSave(); }
+      }, true);
     }
+    saveModal.onDone = onDone || null;
     var list = saveModal.querySelector(".pl-list");
     var form = saveModal.querySelector(".pl-new");
     var input = form.querySelector("input");
-    saveModal.querySelector(".pl-video").textContent = title || "";
+    saveModal.querySelector(".pl-video").textContent = n > 1 ? n + " videos selected" : (title || "");
     input.value = "";
 
     function load() {
       list.innerHTML = '<div class="browse-empty">Loading…</div>';
-      fetch("/api/playlists?vid=" + encodeURIComponent(vid))
+      fetch("/api/playlists?" + vids.map(function (v) { return "vid=" + encodeURIComponent(v); }).join("&"))
         .then(function (r) { return r.json(); })
         .then(function (d) {
           var pls = d.playlists || [];
@@ -624,12 +717,19 @@
           pls.forEach(function (p) {
             var row = document.createElement("label");
             row.className = "pl-row";
-            row.innerHTML = '<input type="checkbox"' + (p.has ? " checked" : "") + '>' +
+            row.innerHTML = '<input type="checkbox">' +
               '<span class="pl-name">' + esc(p.name) + '</span>' +
-              '<span class="pl-count">' + p.count + '</span>';
-            row.querySelector("input").addEventListener("change", function (e) {
+              '<span class="pl-count">' + (n > 1 && p.has && p.has < n ? p.has + " of " + n + " · " : "") + p.count + '</span>';
+            var cb = row.querySelector("input");
+            cb.checked = p.has === n;
+            cb.indeterminate = p.has > 0 && p.has < n;  // some of the selection already in it
+            cb.addEventListener("change", function () {
               saveDirty = true;
-              plPost(p.id, e.target.checked ? "add" : "remove", { vid: vid });
+              var add = cb.checked;
+              plPost(p.id, add ? "add" : "remove", { vid: vids }).then(function () {
+                if (saveModal.onDone) saveModal.onDone(add ? "Added to " + p.name : "Removed from " + p.name);
+                load();
+              });
             });
             list.appendChild(row);
           });
@@ -637,10 +737,14 @@
     }
     form.onsubmit = function (e) {
       e.preventDefault();
-      var n = input.value.trim();
-      if (!n) return;
+      var name = input.value.trim();
+      if (!name) return;
       saveDirty = true;
-      plCreate(n, vid).then(function () { input.value = ""; load(); });
+      plCreate(name, vids).then(function () {
+        input.value = "";
+        if (saveModal.onDone) saveModal.onDone("Created " + name);
+        load();
+      });
     };
     saveModal.hidden = false;
     load();

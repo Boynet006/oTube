@@ -640,3 +640,61 @@ a.shuffle-btn { text-decoration: none; }
 @keyframes pin-shake { 20%, 60% { transform: translateX(-8px); } 40%, 80% { transform: translateX(8px); } }
 @keyframes pin-pop { from { transform: scale(.94); opacity: 0; } }
 @keyframes pin-fade { from { opacity: 0; } }
+
+/* ---- Multi-select ---- */
+.card { position: relative; }
+.card__check {
+  position: absolute; top: 8px; left: 8px; z-index: 3; width: 28px; height: 28px; padding: 0;
+  display: grid; place-items: center; border-radius: 50%; cursor: pointer;
+  background: rgba(0,0,0,.55); border: 2px solid rgba(255,255,255,.9); color: transparent;
+  opacity: 0; transform: scale(.9); transition: opacity .12s, transform .12s, background .12s;
+}
+.card:hover .card__check, .card__check:focus-visible, .grid.selecting .card__check { opacity: 1; transform: none; }
+.card__check:hover { background: rgba(0,0,0,.75); }
+.card.selected .card__check { background: #3ea6ff; border-color: #3ea6ff; color: #0f0f0f; }
+.grid.selecting .card { cursor: pointer; }
+.grid.selecting .card a { cursor: pointer; }
+.card .thumb { transition: transform .15s; }
+.card.selected .thumb { transform: scale(.92); box-shadow: 0 0 0 3px #3ea6ff; }
+.grid.list .card__check { top: 12px; left: 12px; }
+.grid.list .card.selected { background: rgba(62,166,255,.12); }
+.grid.list .card.selected .thumb { transform: none; }
+
+.selbar {
+  position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 60;
+  display: flex; align-items: center; gap: 8px; padding: 8px 10px 8px 8px;
+  width: min(720px, calc(100% - 32px)); border-radius: 28px;
+  background: #1f2a36; border: 1px solid #2e4257; box-shadow: 0 10px 40px rgba(0,0,0,.6);
+  animation: selbar-in .18s ease-out;
+}
+.selbar[hidden] { display: none; }
+@keyframes selbar-in { from { transform: translate(-50%, 16px); opacity: 0; } }
+.selbar__x {
+  width: 36px; height: 36px; border-radius: 50%; border: none; background: none; color: var(--text);
+  cursor: pointer; font-size: 15px;
+}
+.selbar__x:hover { background: rgba(255,255,255,.1); }
+.selbar__count { font-weight: 600; font-size: 15px; white-space: nowrap; }
+.selbar__spacer { flex: 1; }
+.selbar__btn {
+  display: flex; align-items: center; gap: 6px; height: 36px; padding: 0 14px; border-radius: 18px;
+  border: none; cursor: pointer; font-size: 14px; font-weight: 600; white-space: nowrap;
+  background: rgba(255,255,255,.08); color: var(--text);
+}
+.selbar__btn:hover { background: rgba(255,255,255,.16); }
+.selbar__btn.primary { background: #3ea6ff; color: #0f0f0f; }
+.selbar__btn.primary:hover { background: #65b8ff; }
+.selbar__btn.danger { color: #ff8a8a; }
+.selbar__btn.danger:hover { background: #4a1820; }
+@media (max-width: 640px) { #sel-all { display: none; } .selbar__btn { padding: 0 10px; } }
+
+/* playlist dialog: partial-selection hint */
+.pl-row input:indeterminate { accent-color: #3ea6ff; }
+
+/* reshuffle button next to Sort */
+.icon-pill {
+  width: 34px; height: 34px; border-radius: 50%; border: none; cursor: pointer; display: grid; place-items: center;
+  background: var(--bg-3); color: var(--text);
+}
+.icon-pill:hover { background: #3a3a3a; }
+.note-toast.raised { bottom: 92px; }

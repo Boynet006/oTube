@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 import queue
+import random
 import re
 import subprocess
 import threading
@@ -326,8 +327,14 @@ def index():
             "size": (lambda v: v["size"], True),
             "duration": (lambda v: v["dur_secs"], True),
         }
-        keyfn, rev = keys.get(sort, keys["name"])
-        videos.sort(key=keyfn, reverse=rev)
+        if sort == "random":
+            # Seeded so the order is stable across reloads/back; a new seed reshuffles.
+            seed = request.args.get("seed") or str(random.randrange(1, 10**6))
+            videos.sort(key=lambda v: v["id"])
+            random.Random(seed).shuffle(videos)
+        else:
+            keyfn, rev = keys.get(sort, keys["name"])
+            videos.sort(key=keyfn, reverse=rev)
     hidden = private_folders(cfg)
     unlocked = private_unlocked()
     folders = [f for f in cfg.get("video_folders", []) if unlocked or f not in hidden]
@@ -1055,9 +1062,9 @@ def delete_video(vid):
 
 @app.route("/api/playlists")
 def api_playlists():
-    vid = request.args.get("vid", "")
+    vids = set(request.args.getlist("vid"))
     return {"playlists": [{"id": p["id"], "name": p["name"], "count": len(p["items"]),
-                           "has": vid in p["items"]} for p in load_playlists()]}
+                           "has": len(vids & set(p["items"]))} for p in load_playlists()]}
 
 
 @app.route("/api/playlists", methods=["POST"])
@@ -1067,9 +1074,9 @@ def api_playlist_create():
         return {"ok": False, "error": "empty name"}, 400
     pls = load_playlists()
     pl = {"id": os.urandom(5).hex(), "name": name, "items": []}
-    vid = request.form.get("vid")
-    if vid:
-        pl["items"].append(vid)
+    for vid in request.form.getlist("vid"):
+        if vid and vid not in pl["items"]:
+            pl["items"].append(vid)
     pls.append(pl)
     save_playlists(pls)
     return {"ok": True, "id": pl["id"]}
@@ -1081,14 +1088,15 @@ def api_playlist_action(pid, action):
     pl = find_playlist(pls, pid)
     if not pl:
         return {"ok": False, "error": "no such playlist"}, 404
-    vid = request.form.get("vid", "")
+    vids = [v for v in request.form.getlist("vid") if v]  # one or many
+    vid = vids[0] if vids else ""
     items = pl["items"]
     if action == "add":
-        if vid and vid not in items:
-            items.append(vid)
+        for v in vids:
+            if v not in items:
+                items.append(v)
     elif action == "remove":
-        if vid in items:
-            items.remove(vid)
+        pl["items"] = items = [i for i in items if i not in vids]
     elif action in ("up", "down"):
         if vid in items:
             i = items.index(vid)
