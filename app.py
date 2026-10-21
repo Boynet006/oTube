@@ -375,7 +375,12 @@ def watch(vid):
                            playlist=playlist, pos=pos,
                            folder_count=sum(1 for v in everything if v["folder"] == r["folder"]),
                            liked=bool(liked and vid in liked["items"]),
-                           private_on=private_unlocked(), has_pin=bool(cfg.get("pin_hash")))
+                           private_on=private_unlocked(), has_pin=bool(cfg.get("pin_hash")),
+                           # sidebar drawer
+                           folders=[f for f in cfg.get("video_folders", [])
+                                    if private_unlocked() or f not in private_folders(cfg)],
+                           playlists=load_playlists(), private_set=private_folders(cfg),
+                           current_folder="", sort="name")
 
 
 def _live_stream(r: dict) -> Response:

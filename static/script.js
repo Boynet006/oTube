@@ -14,7 +14,23 @@
   // --- Sidebar toggle ---
   var menuBtn = document.getElementById("menu-toggle");
   var sidebar = document.getElementById("sidebar");
-  if (menuBtn && sidebar) {
+  if (menuBtn && sidebar && sidebar.classList.contains("drawer")) {
+    // Watch page: the guide slides in over the page (like YouTube), with a scrim.
+    var scrim = document.getElementById("drawer-scrim");
+    var setDrawer = function (open) {
+      sidebar.classList.toggle("hidden", !open);
+      if (scrim) scrim.hidden = !open;
+      menuBtn.setAttribute("aria-expanded", open ? "true" : "false");
+      if (open) { var f = sidebar.querySelector("a, button"); if (f) f.focus(); } else menuBtn.focus();
+    };
+    menuBtn.addEventListener("click", function () { setDrawer(sidebar.classList.contains("hidden")); });
+    if (scrim) scrim.addEventListener("click", function () { setDrawer(false); });
+    var dc = document.getElementById("drawer-close");
+    if (dc) dc.addEventListener("click", function () { setDrawer(false); });
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape" && !sidebar.classList.contains("hidden")) { e.stopImmediatePropagation(); setDrawer(false); }
+    }, true);
+  } else if (menuBtn && sidebar) {
     menuBtn.addEventListener("click", function () { sidebar.classList.toggle("hidden"); });
   }
 

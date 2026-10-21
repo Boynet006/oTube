@@ -10,6 +10,9 @@
 <body>
   <header class="topbar">
     <div class="topbar__left">
+      <button id="menu-toggle" class="icon-btn" title="Menu" aria-label="Menu" aria-controls="sidebar" aria-expanded="false">
+        <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M3 6h18v2H3V6m0 5h18v2H3v-2m0 5h18v2H3v-2Z"/></svg>
+      </button>
       <a class="brand" href="/">
         <svg class="brand__mark" viewBox="0 0 28 28" width="28" height="28" aria-hidden="true"><rect width="28" height="28" rx="7" fill="#ff0033"/><circle cx="14" cy="14" r="8.2" fill="none" stroke="#fff" stroke-width="2.8"/><path d="M12 10.6v6.8l5.4-3.4z" fill="#fff" stroke="#fff" stroke-width="1.2" stroke-linejoin="round"/></svg>
         <span class="brand__text"><span class="brand__o">o</span>Tube</span>
@@ -32,6 +35,9 @@
     </div>
   </header>
 
+  {% set drawer = True %}
+  {% include "_sidebar.html" %}
+  <div class="drawer-scrim" id="drawer-scrim" hidden></div>
   <div class="theater-slot" id="theater-slot"></div>
   <div class="watch">
     <div class="watch__main">

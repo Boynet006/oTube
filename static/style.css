@@ -797,3 +797,45 @@ a.shuffle-btn { text-decoration: none; }
   .yt-pill { padding: 0 10px; }
   .p-pill .p-btn { width: 38px; height: 38px; }
 }
+
+/* ===== YouTube watch-page metrics (ytd-watch-flexy) =====
+   columns centered; 24px page padding + gap; primary width capped so the
+   16:9 player fits the viewport height; secondary 402px. */
+.watch {
+  max-width: none; margin: 0; padding: 24px 24px 0; gap: 24px;
+  justify-content: center; align-items: flex-start;
+}
+.watch__main {
+  flex: 1 1 0; min-width: 0;
+  max-width: max(640px, calc((100vh - 56px - 24px - 136px) * 16 / 9));
+}
+.watch__side { flex: 0 0 402px; width: 402px; min-width: 300px; }
+.player-wrap { border-radius: 12px; }
+#player { width: 100%; height: auto; max-height: none; aspect-ratio: 16 / 9; }
+.yt-title { margin-top: 12px; }
+.yt-rail .up-item { margin: 0 0 8px; }
+.up-thumb { width: 168px; height: 94px; aspect-ratio: auto; }
+.yt-chips { margin-bottom: 12px; padding-top: 0; }
+@media (min-width: 1800px) {      /* very wide: YouTube widens the rail and its thumbnails */
+  .watch__side { flex-basis: 426px; width: 426px; }
+}
+@media (max-width: 1016px) {      /* one column: rail below the video */
+  .watch { flex-direction: column; padding: 0 0 24px; }
+  .watch__main { max-width: none; width: 100%; }
+  .watch__main > :not(.player-wrap) { margin-left: 12px; margin-right: 12px; }
+  .player-wrap { border-radius: 0; }
+  .watch__side { width: auto; flex-basis: auto; padding: 0 12px; }
+}
+.theater-slot #player { aspect-ratio: auto; }
+
+/* ===== Guide drawer on the watch page ===== */
+.sidebar.drawer {
+  display: block; position: fixed; top: 0; left: 0; bottom: 0; z-index: 120;
+  width: 240px; height: 100vh; padding: 0 12px 12px; background: var(--bg-2); border-right: none;
+  transform: translateX(0); transition: transform .2s ease, visibility .2s;
+  box-shadow: 4px 0 24px rgba(0,0,0,.5);
+}
+.sidebar.drawer.hidden { display: block; transform: translateX(-100%); visibility: hidden; box-shadow: none; }
+.drawer__head { display: flex; align-items: center; gap: 12px; height: 56px; padding: 0 4px; margin-bottom: 8px; }
+.drawer-scrim { position: fixed; inset: 0; z-index: 110; background: rgba(0,0,0,.5); }
+.drawer-scrim[hidden] { display: none; }
