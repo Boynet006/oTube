@@ -859,6 +859,11 @@ def _browse_host(path: str):
     return {"path": to_host(local), "parent": parent, "is_root": False, "dirs": dirs, "video_count": vids}
 
 
+PIN_RE = re.compile(r"^\d{4,8}$")
+PIN_MAX_TRIES, PIN_LOCKOUT_SECS = 5, 30
+_pin_fails: dict[str, list] = {}  # client ip -> [failures, locked_until]
+
+
 @app.route("/mode", methods=["POST"])
 def set_mode():
     """Switch Family/Private mode for this browser session."""
@@ -866,8 +871,22 @@ def set_mode():
     if want:
         cfg = load_config()
         pin_hash = cfg.get("pin_hash")
-        if pin_hash and not check_password_hash(pin_hash, request.form.get("pin", "")):
-            return {"ok": False, "error": "Wrong PIN"}, 403
+        if pin_hash:
+            ip = request.remote_addr or "?"
+            fails, until = _pin_fails.get(ip, [0, 0])
+            wait = int(until - time.time())
+            if wait > 0:
+                return {"ok": False, "error": f"Too many tries. Wait {wait}s.", "wait": wait}, 429
+            if not check_password_hash(pin_hash, request.form.get("pin", "")):
+                fails += 1
+                if fails >= PIN_MAX_TRIES:
+                    _pin_fails[ip] = [0, time.time() + PIN_LOCKOUT_SECS]
+                    return {"ok": False, "error": f"Too many tries. Wait {PIN_LOCKOUT_SECS}s.",
+                            "wait": PIN_LOCKOUT_SECS}, 429
+                _pin_fails[ip] = [fails, 0]
+                left = PIN_MAX_TRIES - fails
+                return {"ok": False, "error": f"Wrong PIN. {left} tr{'y' if left == 1 else 'ies'} left."}, 403
+            _pin_fails.pop(ip, None)
         session["private"] = True
     else:
         session.pop("private", None)
@@ -897,6 +916,8 @@ def set_pin():
     if not private_unlocked():
         return {"ok": False, "error": "Switch to Private mode first"}, 403
     pin = (request.form.get("pin") or "").strip()
+    if pin and not PIN_RE.match(pin):
+        return {"ok": False, "error": "PIN must be 4 to 8 digits"}, 400
     cfg = load_config()
     if pin:
         cfg["pin_hash"] = generate_password_hash(pin)

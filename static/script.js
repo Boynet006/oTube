@@ -275,6 +275,123 @@
     Object.keys(data).forEach(function (k) { fd.append(k, data[k]); });
     return fetch(url, { method: "POST", body: fd }).then(function (r) { return r.json(); });
   }
+
+  // PIN dialog. opts: { title, text, setup (new + confirm), allowRemove, submitLabel,
+  // onSubmit(pin) -> Promise<{ok, error, wait}>, onRemove() -> Promise }.
+  var LOCK_SVG = '<svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true"><path fill="currentColor" d="M12 2a5 5 0 0 0-5 5v3H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2h-1V7a5 5 0 0 0-5-5zm-3 8V7a3 3 0 0 1 6 0v3H9zm3 4a2 2 0 0 1 1 3.7V19h-2v-1.3A2 2 0 0 1 12 14z"/></svg>', EYE_SVG = '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M12 5C6.5 5 2.7 9.4 1.5 12c1.2 2.6 5 7 10.5 7s9.3-4.4 10.5-7C21.3 9.4 17.5 5 12 5zm0 11a4 4 0 1 1 0-8 4 4 0 0 1 0 8zm0-6a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"/></svg>';
+  function pinDialog(opts) {
+    var prevFocus = document.activeElement;
+    var ov = document.createElement("div");
+    ov.className = "modal-overlay pin-overlay";
+    ov.innerHTML =
+      '<div class="modal pin-modal" role="dialog" aria-modal="true" aria-labelledby="pin-title">' +
+      '  <button class="modal__close pin-x" type="button" aria-label="Close">✕</button>' +
+      '  <div class="pin-icon">' + LOCK_SVG + '</div>' +
+      '  <h2 class="pin-title" id="pin-title"></h2>' +
+      '  <p class="pin-text"></p>' +
+      '  <form class="pin-form" novalidate>' +
+      '    <label class="pin-field"><span class="pin-label">' + (opts.setup ? "New PIN" : "PIN") + '</span>' +
+      '      <span class="pin-wrap"><input class="pin-input" type="password" inputmode="numeric" pattern="[0-9]*"' +
+      '        maxlength="8" autocomplete="off" spellcheck="false">' +
+      '        <button type="button" class="pin-eye" aria-label="Show PIN" title="Show PIN">' + EYE_SVG + '</button></span></label>' +
+      (opts.setup ?
+      '    <label class="pin-field"><span class="pin-label">Confirm PIN</span>' +
+      '      <span class="pin-wrap"><input class="pin-input" type="password" inputmode="numeric" pattern="[0-9]*"' +
+      '        maxlength="8" autocomplete="off" spellcheck="false"></span></label>' : '') +
+      '    <div class="pin-error" role="alert" aria-live="assertive"></div>' +
+      '    <div class="pin-actions">' +
+      (opts.allowRemove ? '<button type="button" class="pin-btn pin-remove">Remove PIN</button>' : '') +
+      '      <span class="pin-spacer"></span>' +
+      '      <button type="button" class="pin-btn pin-cancel">Cancel</button>' +
+      '      <button type="submit" class="pin-btn pin-ok" disabled></button>' +
+      '    </div>' +
+      '  </form>' +
+      '</div>';
+    document.body.appendChild(ov);
+    var modal = ov.querySelector(".pin-modal");
+    var inputs = [].slice.call(ov.querySelectorAll(".pin-input"));
+    var okBtn = ov.querySelector(".pin-ok"), errEl = ov.querySelector(".pin-error");
+    ov.querySelector(".pin-title").textContent = opts.title;
+    ov.querySelector(".pin-text").textContent = opts.text || "";
+    okBtn.textContent = opts.submitLabel || "OK";
+
+    function close() {
+      ov.remove();
+      document.removeEventListener("keydown", onKey, true);
+      if (prevFocus && prevFocus.focus) prevFocus.focus();
+    }
+    function error(msg) {
+      errEl.textContent = msg;
+      modal.classList.remove("shake"); void modal.offsetWidth; modal.classList.add("shake");
+    }
+    function valid() {
+      var a = inputs[0].value;
+      if (!/^\d{4,8}$/.test(a)) return false;
+      return !opts.setup || inputs[1].value.length > 0;
+    }
+    inputs.forEach(function (inp) {
+      inp.addEventListener("input", function () {
+        inp.value = inp.value.replace(/\D/g, "").slice(0, 8);  // digits only
+        errEl.textContent = "";
+        okBtn.disabled = !valid();
+      });
+    });
+    ov.querySelector(".pin-eye").addEventListener("click", function () {
+      var show = inputs[0].type === "password";
+      inputs.forEach(function (i) { i.type = show ? "text" : "password"; });
+      this.classList.toggle("on", show);
+      this.setAttribute("aria-label", show ? "Hide PIN" : "Show PIN");
+      this.title = show ? "Hide PIN" : "Show PIN";
+    });
+    ov.querySelector(".pin-x").addEventListener("click", close);
+    ov.querySelector(".pin-cancel").addEventListener("click", close);
+    ov.addEventListener("mousedown", function (e) { if (e.target === ov) close(); });
+    var rm = ov.querySelector(".pin-remove");
+    if (rm) rm.addEventListener("click", function () {
+      rm.disabled = true;
+      opts.onRemove().then(close);
+    });
+    // Esc closes; Tab stays inside the dialog.
+    function onKey(e) {
+      if (e.key === "Escape") { e.stopPropagation(); close(); return; }
+      if (e.key !== "Tab") return;
+      var f = [].slice.call(modal.querySelectorAll("button:not([disabled]), input"));
+      var first = f[0], last = f[f.length - 1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    }
+    document.addEventListener("keydown", onKey, true);
+
+    ov.querySelector(".pin-form").addEventListener("submit", function (e) {
+      e.preventDefault();
+      if (!valid()) { error("PIN must be 4 to 8 digits."); return; }
+      if (opts.setup && inputs[0].value !== inputs[1].value) {
+        error("PINs don't match."); inputs[1].value = ""; inputs[1].focus(); okBtn.disabled = true; return;
+      }
+      okBtn.disabled = true;
+      okBtn.classList.add("busy");
+      opts.onSubmit(inputs[0].value).then(function (d) {
+        okBtn.classList.remove("busy");
+        if (d && d.ok) { close(); return; }
+        error((d && d.error) || "Something went wrong.");
+        inputs.forEach(function (i) { i.value = ""; });
+        if (d && d.wait) {  // locked out: count down, then re-enable
+          inputs.forEach(function (i) { i.disabled = true; });
+          var n = d.wait, t = setInterval(function () {
+            n -= 1;
+            errEl.textContent = "Too many tries. Wait " + n + "s.";
+            if (n <= 0) {
+              clearInterval(t); errEl.textContent = "";
+              inputs.forEach(function (i) { i.disabled = false; });
+              inputs[0].focus();
+            }
+          }, 1000);
+        } else inputs[0].focus();
+      }).catch(function () { okBtn.classList.remove("busy"); okBtn.disabled = false; error("Network error."); });
+    });
+    setTimeout(function () { inputs[0].focus(); }, 30);
+  }
+
   var modeBtn = document.getElementById("mode-btn");
   if (modeBtn) {
     modeBtn.addEventListener("click", function () {
@@ -282,14 +399,20 @@
         postForm("/mode", { private: "0" }).then(function () { location.href = "/"; });
         return;
       }
-      var data = { private: "1" };
-      if (modeBtn.getAttribute("data-pin") === "1") {
-        var pin = window.prompt("Enter PIN to switch to Private mode:");
-        if (pin === null) return;
-        data.pin = pin;
+      if (modeBtn.getAttribute("data-pin") !== "1") {
+        postForm("/mode", { private: "1" }).then(function () { location.reload(); });
+        return;
       }
-      postForm("/mode", data).then(function (d) {
-        if (d.ok) location.reload(); else alert(d.error || "Could not unlock");
+      pinDialog({
+        title: "Enter PIN",
+        text: "Unlock Private mode to show private folders.",
+        submitLabel: "Unlock",
+        onSubmit: function (pin) {
+          return postForm("/mode", { private: "1", pin: pin }).then(function (d) {
+            if (d.ok) location.reload();
+            return d;
+          });
+        },
       });
     });
   }
@@ -303,11 +426,22 @@
   var pinBtn = document.getElementById("pin-btn");
   if (pinBtn) {
     pinBtn.addEventListener("click", function () {
-      var pin = window.prompt("New PIN for Private mode (leave empty to remove the PIN):");
-      if (pin === null) return;
-      postForm("/pin", { pin: pin }).then(function (d) {
-        if (d.ok) { alert(d.has_pin ? "PIN set." : "PIN removed."); location.reload(); }
-        else alert(d.error || "Failed");
+      var hasPin = modeBtn && modeBtn.getAttribute("data-pin") === "1";
+      pinDialog({
+        title: hasPin ? "Change PIN" : "Set a PIN",
+        text: "Needed to switch to Private mode. Use 4 to 8 digits.",
+        setup: true,
+        allowRemove: hasPin,
+        submitLabel: "Save PIN",
+        onSubmit: function (pin) {
+          return postForm("/pin", { pin: pin }).then(function (d) {
+            if (d.ok) location.reload();
+            return d;
+          });
+        },
+        onRemove: function () {
+          return postForm("/pin", { pin: "" }).then(function () { location.reload(); });
+        },
       });
     });
   }
