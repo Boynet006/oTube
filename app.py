@@ -290,7 +290,8 @@ def enrich(items: list[dict]) -> list[dict]:
                     "size_h": fmt_size(r["size"]), "folder_name": fname,
                     "added": rel_time(r["mtime"]),
                     "avatar_letter": (fname[:1] or "V").upper(),
-                    "avatar_hue": avatar_hue(fname)})
+                    "avatar_hue": avatar_hue(fname),
+                    "is_new": time.time() - r["mtime"] < 7 * 86400})
     global _dur_dirty
     if _dur_dirty:
         _save_dur_cache()
@@ -365,12 +366,16 @@ def watch(vid):
         other = [v for v in everything if v["folder"] != r["folder"]]
         upnext = same + other
         next_vid = upnext[0]["id"] if upnext else None
-    d = probe_duration(r["path"])
-    cur = {**r, "duration": fmt_duration(d), "size_h": fmt_size(r["size"])}
+    cur = next((v for v in enrich([r])), None)
     next_item = next((v for v in upnext if v["id"] == next_vid), None)
+    liked = find_playlist(load_playlists(), LIKED_ID)
+    cfg = load_config()
     return render_template("watch.html", video=cur, upnext=upnext, next_vid=next_vid,
                            next_item=next_item, prev_vid=prev_vid,
-                           playlist=playlist, pos=pos)
+                           playlist=playlist, pos=pos,
+                           folder_count=sum(1 for v in everything if v["folder"] == r["folder"]),
+                           liked=bool(liked and vid in liked["items"]),
+                           private_on=private_unlocked(), has_pin=bool(cfg.get("pin_hash")))
 
 
 def _live_stream(r: dict) -> Response:
@@ -1059,6 +1064,68 @@ def delete_video(vid):
 
 
 # ---- Playlists (JSON API used by the "Save to playlist" dialog + playlist page) ----
+LIKED_ID = "liked"  # built-in "Liked videos" playlist, filled by the Like button
+
+
+@app.route("/api/like/<vid>", methods=["POST"])
+def api_like(vid):
+    if not allowed(get_rec(vid)):
+        return {"ok": False, "error": "not found"}, 404
+    pls = load_playlists()
+    pl = find_playlist(pls, LIKED_ID)
+    if not pl:
+        pl = {"id": LIKED_ID, "name": "Liked videos", "items": []}
+        pls.insert(0, pl)
+    if vid in pl["items"]:
+        pl["items"].remove(vid)
+        liked = False
+    else:
+        pl["items"].insert(0, vid)  # newest like first, like YouTube
+        liked = True
+    save_playlists(pls)
+    return {"ok": True, "liked": liked}
+
+
+@app.route("/download/<vid>")
+def download(vid):
+    r = get_rec(vid)
+    if not allowed(r):
+        abort(404)
+    return send_file(r["path"], as_attachment=True, download_name=r["title"])
+
+
+@app.route("/api/info/<vid>")
+def api_info(vid):
+    """Technical details for the description box's "...more"."""
+    r = get_rec(vid)
+    if not allowed(r):
+        abort(404)
+    info = {}
+    try:
+        out = subprocess.run(
+            [FFPROBE, "-v", "error", "-show_entries",
+             "format=format_long_name,bit_rate:stream=codec_type,codec_long_name,width,height,"
+             "avg_frame_rate,channels,sample_rate", "-of", "json", r["path"]],
+            capture_output=True, text=True, timeout=20).stdout
+        info = json.loads(out or "{}")
+    except Exception:
+        pass
+    fmt = info.get("format", {})
+    v = next((s for s in info.get("streams", []) if s.get("codec_type") == "video"), {})
+    a = next((s for s in info.get("streams", []) if s.get("codec_type") == "audio"), {})
+    fps = ""
+    try:
+        n, d = (v.get("avg_frame_rate") or "0/1").split("/")
+        fps = f"{float(n) / float(d):.3g}" if float(d) else ""
+    except Exception:
+        pass
+    return {
+        "path": r["host_path"], "container": fmt.get("format_long_name", ""),
+        "resolution": f'{v.get("width")}×{v.get("height")}' if v.get("width") else "",
+        "fps": fps, "video": v.get("codec_long_name", ""), "audio": a.get("codec_long_name", ""),
+        "audio_ch": a.get("channels"), "bitrate": int(fmt.get("bit_rate") or 0),
+        "modified": time.strftime("%b %d, %Y", time.localtime(r["mtime"])),
+    }
 
 @app.route("/api/playlists")
 def api_playlists():

@@ -777,3 +777,106 @@
 
   // Watch-page playback lives in player.js.
 })();
+
+// Watch page: actions under the video, description box, rail chips.
+(function () {
+  "use strict";
+  function flash(msg) {
+    var t = document.getElementById("note-toast");
+    if (!t) { t = document.createElement("div"); t.id = "note-toast"; t.className = "note-toast"; document.body.appendChild(t); }
+    t.textContent = msg; t.classList.add("show");
+    clearTimeout(flash._t); flash._t = setTimeout(function () { t.classList.remove("show"); }, 2500);
+  }
+  var like = document.getElementById("like-btn");
+  if (like) like.addEventListener("click", function () {
+    fetch("/api/like/" + like.getAttribute("data-id"), { method: "POST" }).then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (!d.ok) return;
+        like.classList.toggle("on", d.liked);
+        like.setAttribute("aria-pressed", d.liked ? "true" : "false");
+        like.querySelector(".yt-like__label").textContent = d.liked ? "Liked" : "Like";
+        flash(d.liked ? "Added to Liked videos" : "Removed from Liked videos");
+      });
+  });
+  var share = document.getElementById("share-btn");
+  if (share) share.addEventListener("click", function () {
+    var u = new URL(location.href);
+    var t = Math.floor(window.otubeCurrentTime ? window.otubeCurrentTime() : 0);
+    if (t > 0) u.searchParams.set("t", t); else u.searchParams.delete("t");
+    var link = u.toString();
+    (navigator.clipboard ? navigator.clipboard.writeText(link) : Promise.reject())
+      .then(function () { flash("Link copied" + (t > 0 ? " (starts at " + Math.floor(t / 60) + ":" + ("0" + t % 60).slice(-2) + ")" : "")); })
+      .catch(function () { window.prompt("Copy this link:", link); });
+  });
+  var save = document.getElementById("save-btn");
+  if (save) save.addEventListener("click", function (e) {
+    // reuse the ⋮ menu's "Save to playlist…" (same dialog)
+    e.stopPropagation();
+    var more = document.querySelector(".watch-more");
+    more.click();
+    var item = document.querySelector('#ctx-menu [data-act="save"]');
+    if (item) item.click();
+  });
+
+  // Description box: click to expand, loads technical details once.
+  var desc = document.getElementById("yt-desc");
+  if (desc) {
+    var loaded = false, more = desc.querySelector(".yt-desc__more"), toggle = desc.querySelector(".yt-desc__toggle");
+    function setOpen(open) {
+      desc.classList.toggle("open", open);
+      desc.setAttribute("aria-expanded", open ? "true" : "false");
+      more.hidden = !open;
+      toggle.textContent = open ? "Show less" : "...more";
+      if (open && !loaded) {
+        loaded = true;
+        more.textContent = "Loading details…";
+        fetch("/api/info/" + desc.getAttribute("data-id")).then(function (r) { return r.json(); }).then(function (d) {
+          var rows = [
+            ["Resolution", d.resolution + (d.fps ? " @ " + d.fps + " fps" : "")],
+            ["Video", d.video], ["Audio", d.audio + (d.audio_ch ? " · " + d.audio_ch + " ch" : "")],
+            ["Container", d.container], ["Bitrate", d.bitrate ? Math.round(d.bitrate / 1000) + " kb/s" : ""],
+            ["Modified", d.modified],
+          ].filter(function (r) { return r[1] && r[1].trim(); });
+          more.innerHTML = '<div class="yt-desc__grid">' + rows.map(function (r) {
+            return '<span>' + r[0] + '</span><span></span>';
+          }).join("") + '</div>';
+          var cells = more.querySelectorAll(".yt-desc__grid span:nth-child(2n)");
+          rows.forEach(function (r, i) { cells[i].textContent = r[1]; });
+        }).catch(function () { more.textContent = "Couldn't read file details."; });
+      }
+    }
+    desc.addEventListener("click", function (e) {
+      if (e.target.closest(".yt-desc__toggle")) { setOpen(!desc.classList.contains("open")); return; }
+      if (!desc.classList.contains("open") && !window.getSelection().toString()) setOpen(true);
+    });
+    desc.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" && e.target === desc) setOpen(!desc.classList.contains("open"));
+    });
+  }
+
+  // Rail: watched bars + filter chips
+  var rail = document.getElementById("rail");
+  var prog = {};
+  try { prog = JSON.parse(localStorage.getItem("kidtube.progress") || "{}"); } catch (e) {}
+  if (rail) rail.querySelectorAll(".up-item").forEach(function (a) {
+    var e = prog[a.getAttribute("data-id")];
+    if (e && e.d && e.t / e.d > 0.02) {
+      a.classList.add("partial");
+      a.querySelector(".watched__bar").style.width = Math.min(100, e.t / e.d * 100).toFixed(1) + "%";
+      if (e.t / e.d >= 0.97) a.classList.add("seen");
+    }
+  });
+  var chips = document.getElementById("rail-chips");
+  if (chips && rail) chips.addEventListener("click", function (e) {
+    var c = e.target.closest(".chip"); if (!c) return;
+    chips.querySelectorAll(".chip").forEach(function (x) { x.classList.toggle("active", x === c); });
+    var f = c.getAttribute("data-f");
+    rail.querySelectorAll(".up-item").forEach(function (a) {
+      var show = f === "all" ||
+        (f === "folder" && a.getAttribute("data-same") === "1") ||
+        (f === "new" && a.getAttribute("data-new") === "1") ||
+        (f === "unwatched" && !a.classList.contains("partial"));
+      a.style.display = show ? "" : "none";
+    });
+  });
+})();

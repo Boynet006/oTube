@@ -73,9 +73,11 @@
     '  </div>' +
     '  <div class="p-bar">' +
     '    <div class="p-left">' +
+    '     <div class="p-pill">' +
     '      <button type="button" class="p-btn" data-a="prev" title="Previous (Shift+P)" aria-label="Previous">' + I.prev + '</button>' +
     '      <button type="button" class="p-btn" data-a="play" title="Play (k)" aria-label="Play">' + I.play + '</button>' +
     '      <button type="button" class="p-btn" data-a="next" title="Next (Shift+N)" aria-label="Next">' + I.next + '</button>' +
+    '     </div><div class="p-pill">' +
     '      <div class="p-vol">' +
     '        <button type="button" class="p-btn" data-a="mute" title="Mute (m)" aria-label="Mute">' + I.volHigh + '</button>' +
     '        <input type="range" class="p-vol__range" min="0" max="1" step="0.02" aria-label="Volume">' +
@@ -84,15 +86,19 @@
     '        <button type="button" class="p-btn" data-a="bright" title="Brightness (b / Shift+B)" aria-label="Brightness">' + I.sun + '</button>' +
     '        <input type="range" class="p-vol__range p-bright__range" min="0" max="1" step="0.05" aria-label="Brightness">' +
     '      </div>' +
+    '     </div><div class="p-pill">' +
     '      <button type="button" class="p-time" data-a="time" title="Toggle remaining time"><span class="p-cur">0:00</span> / <span class="p-dur">0:00</span></button>' +
+    '     </div>' +
     '    </div>' +
     '    <div class="p-right">' +
+    '     <div class="p-pill">' +
     '      <button type="button" class="p-switch" data-a="autoplay" title="Autoplay" aria-label="Autoplay" role="switch"><span class="p-switch__track"><span class="p-switch__knob"></span></span></button>' +
     '      <button type="button" class="p-btn" data-a="cc" title="Subtitles/closed captions (c)" aria-label="Subtitles">' + I.cc + '</button>' +
     '      <button type="button" class="p-btn" data-a="settings" title="Settings" aria-label="Settings" aria-haspopup="menu">' + I.gear + '</button>' +
     '      <button type="button" class="p-btn" data-a="mini" title="Miniplayer (i)" aria-label="Miniplayer">' + I.mini + '</button>' +
     '      <button type="button" class="p-btn" data-a="theater" title="Theater mode (t)" aria-label="Theater mode">' + I.theater + '</button>' +
     '      <button type="button" class="p-btn" data-a="full" title="Full screen (f)" aria-label="Full screen">' + I.full + '</button>' +
+    '     </div>' +
     '    </div>' +
     '  </div>' +
     '</div>');
@@ -587,7 +593,10 @@
   var prog = readJSON(PROG_KEY, {});
   video.addEventListener("loadedmetadata", function () {
     var entry = prog[vid];
-    if (entry && entry.t > 5 && dur() && entry.t < dur() - 10) {
+    var tParam = parseFloat(new URLSearchParams(location.search).get("t"));  // shared link time
+    if (tParam > 0 && dur()) {
+      try { video.currentTime = Math.min(tParam, dur() - 1); } catch (e) {}
+    } else if (entry && entry.t > 5 && dur() && entry.t < dur() - 10) {
       try { video.currentTime = entry.t; } catch (e) {}
       toast("Resumed at " + fmt(entry.t));
     }
@@ -684,5 +693,6 @@
     } catch (e) {}
   }
 
+  window.otubeCurrentTime = function () { return video.currentTime; };
   syncPlay(); syncTime();
 })();

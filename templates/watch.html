@@ -23,7 +23,13 @@
         </button>
       </form>
     </div>
-    <div class="topbar__right"></div>
+    <div class="topbar__right">
+      <button type="button" class="mode-btn {{ 'on' if private_on }}" id="mode-btn"
+              data-private="{{ '1' if private_on else '0' }}" data-pin="{{ '1' if has_pin else '0' }}"
+              title="{{ 'Private mode: private folders are visible. Click to lock.' if private_on else 'Family mode: private folders are hidden. Click to unlock.' }}">
+        {% if private_on %}<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 2a5 5 0 0 0-5 5h2a3 3 0 0 1 6 0v3H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2h-1V7a5 5 0 0 0-5-5z"/></svg><span>Private</span>{% else %}<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 2a5 5 0 0 0-5 5v3H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2h-1V7a5 5 0 0 0-5-5zm-3 8V7a3 3 0 0 1 6 0v3H9z"/></svg><span>Family</span>{% endif %}
+      </button>
+    </div>
   </header>
 
   <div class="theater-slot" id="theater-slot"></div>
@@ -40,19 +46,43 @@
           Your browser can't play this file.
         </video>
       </div>
-      <div class="watch__titlerow">
-        <h1 class="watch__title">{{ video.title }}</h1>
-        <button class="watch-more" title="More actions" aria-label="More actions"
-                data-id="{{ video.id }}" data-name="{{ video.title }}"
-                data-path="{{ video.host_path }}" data-watch="1">⋮</button>
+      <h1 class="yt-title">{{ video.title }}</h1>
+      <div class="yt-owner">
+        <a class="yt-channel" href="/?folder={{ video.folder|urlencode }}" title="{{ video.host_path }}">
+          <span class="avatar yt-avatar" style="--hue: {{ video.avatar_hue }}">{{ video.avatar_letter }}</span>
+          <span class="yt-channel__text">
+            <span class="yt-channel__name">{{ video.folder_name }}</span>
+            <span class="yt-channel__sub">{{ folder_count }} video{{ '' if folder_count == 1 else 's' }}</span>
+          </span>
+        </a>
+        <a class="yt-pill yt-pill--light" href="/?folder={{ video.folder|urlencode }}">Open folder</a>
+        <span class="yt-spacer"></span>
+        <div class="yt-actions">
+          <button type="button" class="yt-pill yt-like {{ 'on' if liked }}" id="like-btn" data-id="{{ video.id }}"
+                  aria-pressed="{{ 'true' if liked else 'false' }}" title="{{ 'Unlike' if liked else 'I like this' }}">
+            <span class="yt-like__off"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M18.77 11h-4.23l1.52-4.94C16.38 5.03 15.54 4 14.38 4c-.58 0-1.14.24-1.52.65L7 11H3v10h4h1h9.43c1.06 0 1.98-.67 2.23-1.61l1.29-6C21.27 12.15 20.22 11 18.77 11zM7 20H4v-8h3v8zm12.98-6.83-1.29 6c-.08.35-.47.83-1.26.83H8v-8.61l5.6-6.06c.19-.21.48-.33.78-.33.26 0 .5.11.63.3.07.1.15.26.09.47l-1.52 4.94-.4 1.29h5.58c.41 0 .8.17 1.03.46.13.15.26.4.19.71z"/></svg></span><span class="yt-like__on"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M3 11h3v10H3V11zm15.77 0h-4.23l1.52-4.94C16.38 5.03 15.54 4 14.38 4c-.58 0-1.14.24-1.52.65L7 11v10h10.43c1.06 0 1.98-.67 2.23-1.61l1.29-6C21.27 12.15 20.22 11 18.77 11z"/></svg></span>
+            <span class="yt-like__label">{{ 'Liked' if liked else 'Like' }}</span>
+          </button>
+          <button type="button" class="yt-pill" id="share-btn" title="Copy link at current time"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M15 5.63 20.66 12 15 18.37V14h-1c-3.96 0-7.14 1-9.75 3.09 1.84-4.07 5.11-6.4 9.89-7.1l.86-.13V5.63M14 3v6C6.22 10.13 3.11 15.33 2 21c2.78-3.97 6.44-6 12-6v6l8-9-8-9z"/></svg><span>Share</span></button>
+          <button type="button" class="yt-pill" id="save-btn" data-id="{{ video.id }}" data-name="{{ video.title }}" title="Save to playlist"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M22 13h-4v4h-2v-4h-4v-2h4V7h2v4h4v2zm-8-6H2v1h12V7zM2 12h8v-1H2v1zm0 4h8v-1H2v1z"/></svg><span>Save</span></button>
+          <a class="yt-pill yt-pill--hide-sm" href="/download/{{ video.id }}" title="Download the original file"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M17 18v1H6v-1h11zm-.5-6.6-.7-.7-3.8 3.7V4h-1v10.4l-3.8-3.8-.7.7 5 5 5-4.9z"/></svg><span>Download</span></a>
+          <button class="yt-pill yt-round watch-more" title="More actions" aria-label="More actions"
+                  data-id="{{ video.id }}" data-name="{{ video.title }}"
+                  data-path="{{ video.host_path }}" data-watch="1"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M7.5 12c0 .83-.67 1.5-1.5 1.5s-1.5-.67-1.5-1.5.67-1.5 1.5-1.5 1.5.67 1.5 1.5zm4.5-1.5c-.83 0-1.5.67-1.5 1.5s.67 1.5 1.5 1.5 1.5-.67 1.5-1.5-.67-1.5-1.5-1.5zm6 0c-.83 0-1.5.67-1.5 1.5s.67 1.5 1.5 1.5 1.5-.67 1.5-1.5-.67-1.5-1.5-1.5z"/></svg></button>
+        </div>
       </div>
-      <div class="watch__meta">
-        {{ video.duration }} · {{ video.size_h }}
-        {% if not video.native %}<span class="tag">transcoded ({{ video.ext[1:]|upper }})</span>{% endif %}
-        <span class="folder-tag">{{ video.folder }}</span>
+      <div class="yt-desc" id="yt-desc" data-id="{{ video.id }}" tabindex="0" role="button" aria-expanded="false">
+        <div class="yt-desc__top">
+          <b>{{ video.added|capitalize }}</b><b>{{ video.duration }}</b><b>{{ video.size_h }}</b>
+          <span class="yt-desc__tags">#{{ video.folder_name|replace(' ', '') }} #{{ video.ext[1:] }}{% if not video.native %} #transcoded{% endif %}</span>
+        </div>
+        <div class="yt-desc__body">
+          <div class="yt-desc__path">{{ video.host_path }}</div>
+          <div class="yt-desc__more" hidden></div>
+        </div>
+        <button type="button" class="yt-desc__toggle">...more</button>
       </div>
-      {% if playlist %}<a class="back" href="/?playlist={{ playlist.id }}">← Back to {{ playlist.name }}</a>
-      {% else %}<a class="back" href="/">← Back to all videos</a>{% endif %}
+      {% if playlist %}<a class="back" href="/?playlist={{ playlist.id }}">← Back to {{ playlist.name }}</a>{% endif %}
     </div>
 
     <aside class="watch__side">
@@ -62,20 +92,32 @@
         <span class="count">{{ pos + 1 }} / {{ upnext|length }}</span>
       </div>
       {% else %}
-      <div class="side-head">Up next</div>
+      <div class="yt-chips" id="rail-chips" role="tablist">
+        <button type="button" class="chip active" data-f="all">All</button>
+        <button type="button" class="chip" data-f="folder">From {{ video.folder_name }}</button>
+        <button type="button" class="chip" data-f="unwatched">Unwatched</button>
+        <button type="button" class="chip" data-f="new">Recently added</button>
+      </div>
       {% endif %}
+      <div class="yt-rail" id="rail">
       {% for v in upnext %}
-      <a class="up-item {{ 'current' if v.id == video.id }}" href="/watch/{{ v.id }}{{ '?list=' ~ playlist.id if playlist else '' }}">
+      <a class="up-item {{ 'current' if v.id == video.id }}" data-id="{{ v.id }}"
+         data-same="{{ '1' if v.folder == video.folder else '0' }}" data-new="{{ '1' if v.is_new else '0' }}"
+         href="/watch/{{ v.id }}{{ '?list=' ~ playlist.id if playlist else '' }}">
         <div class="up-thumb">
           <img loading="lazy" src="/thumb/{{ v.id }}" alt="">
+          {% if v.is_new %}<span class="up-new">New</span>{% endif %}
           <span class="badge">{{ v.duration }}</span>
+          <span class="watched"><span class="watched__bar"></span></span>
         </div>
         <div class="up-meta">
-          <div class="up-title">{{ v.title }}</div>
-          <div class="up-sub">{{ v.size_h }}</div>
+          <div class="up-title" title="{{ v.title }}">{{ v.title }}</div>
+          <div class="up-sub">{{ v.folder_name }}</div>
+          <div class="up-sub">{{ v.size_h }} · {{ v.added }}</div>
         </div>
       </a>
       {% endfor %}
+      </div>
     </aside>
   </div>
 
