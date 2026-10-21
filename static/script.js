@@ -269,6 +269,49 @@
     });
   }
 
+  // --- Family / Private mode ---
+  function postForm(url, data) {
+    var fd = new FormData();
+    Object.keys(data).forEach(function (k) { fd.append(k, data[k]); });
+    return fetch(url, { method: "POST", body: fd }).then(function (r) { return r.json(); });
+  }
+  var modeBtn = document.getElementById("mode-btn");
+  if (modeBtn) {
+    modeBtn.addEventListener("click", function () {
+      if (modeBtn.getAttribute("data-private") === "1") {
+        postForm("/mode", { private: "0" }).then(function () { location.href = "/"; });
+        return;
+      }
+      var data = { private: "1" };
+      if (modeBtn.getAttribute("data-pin") === "1") {
+        var pin = window.prompt("Enter PIN to switch to Private mode:");
+        if (pin === null) return;
+        data.pin = pin;
+      }
+      postForm("/mode", data).then(function (d) {
+        if (d.ok) location.reload(); else alert(d.error || "Could not unlock");
+      });
+    });
+  }
+  document.addEventListener("click", function (e) {
+    var t = e.target.closest(".priv-toggle");
+    if (!t) return;
+    e.preventDefault();
+    postForm("/folder_private", { folder_path: t.getAttribute("data-folder"), private: t.getAttribute("data-private") })
+      .then(function () { location.reload(); });
+  });
+  var pinBtn = document.getElementById("pin-btn");
+  if (pinBtn) {
+    pinBtn.addEventListener("click", function () {
+      var pin = window.prompt("New PIN for Private mode (leave empty to remove the PIN):");
+      if (pin === null) return;
+      postForm("/pin", { pin: pin }).then(function (d) {
+        if (d.ok) { alert(d.has_pin ? "PIN set." : "PIN removed."); location.reload(); }
+        else alert(d.error || "Failed");
+      });
+    });
+  }
+
   // --- Show in folder / Open in player ---
   // Run directly by the server when it's on the PC; when it runs in Docker the
   // server returns the host path and we pass it to the on-PC helper

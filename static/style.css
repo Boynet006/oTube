@@ -558,3 +558,33 @@ a.shuffle-btn { text-decoration: none; }
   max-width: calc(100% - 32px);
 }
 .note-toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+/* ---- Family / Private mode ---- */
+.topbar__right { display: flex; align-items: center; justify-content: flex-end; }
+.mode-btn {
+  display: flex; align-items: center; gap: 6px; height: 36px; padding: 0 14px;
+  background: var(--bg-3); color: var(--text); border: 1px solid var(--border);
+  border-radius: 18px; font-size: 14px; font-weight: 600; cursor: pointer; white-space: nowrap;
+}
+.mode-btn:hover { background: #3a3a3a; }
+.mode-btn.on { background: #3a1a22; border-color: #7a2a3a; color: #ffb3c1; }
+.mode-btn.on:hover { background: #4a2029; }
+.folder .priv-badge { color: var(--text-dim); display: grid; place-items: center; flex-shrink: 0; }
+.folder.private > a span { color: var(--text-dim); }
+.folder .priv-toggle {
+  opacity: 0; background: none; border: none; color: var(--text-dim); cursor: pointer;
+  padding: 4px 6px; border-radius: 6px; display: grid; place-items: center; flex-shrink: 0;
+}
+.folder:hover .priv-toggle, .priv-toggle:focus-visible { opacity: 1; }
+.folder .priv-toggle:hover { color: var(--text); background: #3a3a3a; }
+.chip.private::before { content: "🔒 "; font-size: 11px; }
+.pin-link {
+  display: block; margin: 2px 10px 6px; padding: 4px 6px; background: none; border: none;
+  color: #3ea6ff; font-size: 12.5px; cursor: pointer; text-align: center; width: calc(100% - 20px);
+}
+.pin-link:hover { text-decoration: underline; }
+@media (max-width: 640px) { .mode-btn span { display: none; } .mode-btn { padding: 0 10px; } }
+/* Folder row buttons only take space on hover, so names aren't squeezed */
+.folder .remove-btn, .folder .priv-toggle { display: none; opacity: 1; }
+.folder:hover .remove-btn, .folder:focus-within .remove-btn { display: block; }
+.folder:hover .priv-toggle, .folder:focus-within .priv-toggle { display: grid; }

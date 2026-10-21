@@ -17,13 +17,20 @@ import threading
 import time
 
 from flask import (Flask, Response, abort, redirect, render_template, request,
-                   send_file, url_for)
+                   send_file, session, url_for)
+from werkzeug.security import check_password_hash, generate_password_hash
 
 app = Flask(__name__)
 
 BASE = os.environ.get("OTUBE_DATA") or os.path.dirname(os.path.abspath(__file__))
 os.makedirs(BASE, exist_ok=True)
 CONFIG_PATH = os.path.join(BASE, "config.json")
+_KEY_PATH = os.path.join(BASE, "secret.key")
+if not os.path.exists(_KEY_PATH):
+    with open(_KEY_PATH, "wb") as _f:
+        _f.write(os.urandom(32))
+with open(_KEY_PATH, "rb") as _f:
+    app.secret_key = _f.read()
 PLAYLISTS_PATH = os.path.join(BASE, "playlists.json")  # [{id, name, items: [vid, ...]}]
 DUR_CACHE_PATH = os.path.join(BASE, "duration_cache.json")  # persisted path -> [secs, mtime]
 THUMB_DIR = os.path.join(BASE, "thumbs")
@@ -112,6 +119,29 @@ def load_config() -> dict:
 def save_config(cfg: dict) -> None:
     with open(CONFIG_PATH, "w", encoding="utf-8") as f:
         json.dump(cfg, f, indent=2)
+
+
+# ---- Family / Private mode ----
+# Folders listed in config "private_folders" are hidden everywhere (lists, search,
+# up next, playlists, direct URLs) unless this browser session unlocked Private
+# mode -- with the PIN, if one is set. The session cookie ends with the browser.
+def private_unlocked() -> bool:
+    return bool(session.get("private"))
+
+
+def private_folders(cfg: dict | None = None) -> set:
+    return set((cfg or load_config()).get("private_folders", []))
+
+
+def visible(items: list[dict]) -> list[dict]:
+    if private_unlocked():
+        return items
+    hidden = private_folders()
+    return [v for v in items if v["folder"] not in hidden]
+
+
+def allowed(r: dict | None) -> bool:
+    return bool(r) and (private_unlocked() or r["folder"] not in private_folders())
 
 
 def load_playlists() -> list[dict]:
@@ -278,7 +308,7 @@ def get_rec(vid: str) -> dict | None:
 def index():
     cfg = load_config()
     pls = load_playlists()
-    videos = enrich(scan())
+    videos = visible(enrich(scan()))
     folder = request.args.get("folder", "")
     sort = request.args.get("sort", "name")
     playlist = find_playlist(pls, request.args.get("playlist", ""))
@@ -298,18 +328,21 @@ def index():
         }
         keyfn, rev = keys.get(sort, keys["name"])
         videos.sort(key=keyfn, reverse=rev)
-    return render_template("index.html", videos=videos,
-                           folders=cfg.get("video_folders", []),
+    hidden = private_folders(cfg)
+    unlocked = private_unlocked()
+    folders = [f for f in cfg.get("video_folders", []) if unlocked or f not in hidden]
+    return render_template("index.html", videos=videos, folders=folders,
                            current_folder=folder, sort=sort,
-                           playlists=pls, playlist=playlist)
+                           playlists=pls, playlist=playlist,
+                           private_on=unlocked, private_set=hidden, has_pin=bool(cfg.get("pin_hash")))
 
 
 @app.route("/watch/<vid>")
 def watch(vid):
     r = get_rec(vid)
-    if not r:
+    if not allowed(r):
         abort(404)
-    everything = enrich(scan())
+    everything = visible(enrich(scan()))
     playlist = find_playlist(load_playlists(), request.args.get("list", ""))
     if playlist and vid in playlist["items"]:
         # Playing a playlist: the rail shows the whole list, "next" is the following item.
@@ -363,7 +396,7 @@ def _live_stream(r: dict) -> Response:
 @app.route("/stream/<vid>")
 def stream(vid):
     r = get_rec(vid)
-    if not r:
+    if not allowed(r):
         abort(404)
     if r["native"]:
         # Direct stream with HTTP Range support (seeking works).
@@ -475,7 +508,7 @@ def _file_subs(r: dict) -> list[dict]:
 @app.route("/subs/<vid>")
 def subs_list(vid):
     r = get_rec(vid)
-    if not r:
+    if not allowed(r):
         abort(404)
     tracks = list_subs(r)
     return {"tracks": [{"key": t["key"], "label": t["label"], "lang": t["lang"],
@@ -736,7 +769,7 @@ def subs_status(vid):
 @app.route("/thumb/<vid>")
 def thumb(vid):
     r = get_rec(vid)
-    if not r:
+    if not allowed(r):
         abort(404)
     tp = os.path.join(THUMB_DIR, vid + ".jpg")
     if not os.path.exists(tp):
@@ -826,6 +859,53 @@ def _browse_host(path: str):
     return {"path": to_host(local), "parent": parent, "is_root": False, "dirs": dirs, "video_count": vids}
 
 
+@app.route("/mode", methods=["POST"])
+def set_mode():
+    """Switch Family/Private mode for this browser session."""
+    want = request.form.get("private") == "1"
+    if want:
+        cfg = load_config()
+        pin_hash = cfg.get("pin_hash")
+        if pin_hash and not check_password_hash(pin_hash, request.form.get("pin", "")):
+            return {"ok": False, "error": "Wrong PIN"}, 403
+        session["private"] = True
+    else:
+        session.pop("private", None)
+    return {"ok": True, "private": want}
+
+
+@app.route("/folder_private", methods=["POST"])
+def folder_private():
+    """Mark a folder private (hidden in Family mode) or public again."""
+    if not private_unlocked():
+        return {"ok": False, "error": "Switch to Private mode first"}, 403
+    folder = request.form.get("folder_path", "")
+    cfg = load_config()
+    priv = cfg.setdefault("private_folders", [])
+    if request.form.get("private") == "1":
+        if folder in cfg["video_folders"] and folder not in priv:
+            priv.append(folder)
+    elif folder in priv:
+        priv.remove(folder)
+    save_config(cfg)
+    return {"ok": True}
+
+
+@app.route("/pin", methods=["POST"])
+def set_pin():
+    """Set or clear the PIN needed to enter Private mode (only from Private mode)."""
+    if not private_unlocked():
+        return {"ok": False, "error": "Switch to Private mode first"}, 403
+    pin = (request.form.get("pin") or "").strip()
+    cfg = load_config()
+    if pin:
+        cfg["pin_hash"] = generate_password_hash(pin)
+    else:
+        cfg.pop("pin_hash", None)
+    save_config(cfg)
+    return {"ok": True, "has_pin": bool(pin)}
+
+
 @app.route("/add_folder", methods=["POST"])
 def add_folder():
     path = (request.form.get("folder_path") or "").strip().strip('"').replace("\\", "/")
@@ -843,6 +923,8 @@ def remove_folder():
     cfg = load_config()
     if path in cfg["video_folders"]:
         cfg["video_folders"].remove(path)
+        if path in cfg.get("private_folders", []):
+            cfg["private_folders"].remove(path)
         save_config(cfg)
     return redirect(url_for("index"))
 
