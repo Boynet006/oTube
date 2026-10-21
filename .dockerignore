@@ -9,3 +9,4 @@ __pycache__/
 *.pyc
 otube.ico
 start-otube.*
+otube-helper.ps1

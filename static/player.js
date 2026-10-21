@@ -333,13 +333,19 @@
       setCC(pref >= 0 ? pref : 0);
     }
   }
-  // (Re)load the track list; optionally switch to the track with key `selectKey`.
-  var autoState = { state: "none", progress: 0 };
+  // Track list + server-side caption jobs (speech-to-text and translation).
+  var capInfo = { auto: { state: "none" }, translate: [], source_lang: null };
+  function busy(st) { return st && (st.state === "queued" || st.state === "running"); }
+  function jobKeys(info) {  // job name -> track key it produces
+    var m = { auto: info.auto };
+    (info.translate || []).forEach(function (t) { m["tr-" + t.lang] = t; });
+    return m;
+  }
   function loadSubs(selectKey) {
     return fetch("/subs/" + vid).then(function (r) { return r.json(); }).then(function (d) {
       [].slice.call(video.querySelectorAll("track")).forEach(function (t) { t.remove(); });
       subs = d.tracks || [];
-      autoState = d.auto || autoState;
+      capInfo = d;
       subs.forEach(function (s) {
         var t = document.createElement("track");
         t.kind = "subtitles"; t.label = s.label; t.src = s.src;
@@ -351,27 +357,42 @@
       if (want >= 0) setCC(want, true);
       else if (prefs.ccOn && subs.length) setCC(pref >= 0 ? pref : 0, true);
       else { ccIndex = -1; applyCC(); }
-      if (autoState.state === "queued" || autoState.state === "running") pollAuto();
+      if (menu.getAttribute("data-view") === "cc" && !menu.hidden) renderCCView();
+      var jobs = jobKeys(d);
+      if (Object.keys(jobs).some(function (k) { return busy(jobs[k]); })) pollJobs();
     }).catch(function () {});
   }
-  // Speech-to-text captions, generated on the server.
   var pollTimer = null;
-  function generateCaptions() {
-    autoState = { state: "queued", progress: 0 };
-    fetch("/subs/" + vid + "/generate", { method: "POST" }).then(pollAuto);
-    toast("Generating captions…");
-  }
-  function pollAuto() {
+  function pollJobs() {
     clearTimeout(pollTimer);
+    var before = jobKeys(capInfo);
     pollTimer = setTimeout(function () {
-      fetch("/subs/" + vid + "/status").then(function (r) { return r.json(); }).then(function (st) {
-        autoState = st;
-        if (menu.getAttribute("data-view") === "cc" && !menu.hidden) renderCCView();
-        if (st.state === "done") { loadSubs("auto"); toast("Captions ready"); }
-        else if (st.state === "error") toast("Caption generation failed");
-        else pollAuto();
-      }).catch(pollAuto);
+      fetch("/subs/" + vid).then(function (r) { return r.json(); }).then(function (d) {
+        var after = jobKeys(d), finished = null, failed = false, running = false;
+        Object.keys(after).forEach(function (k) {
+          if (busy(before[k]) && after[k].state === "done") finished = k;
+          if (busy(before[k]) && after[k].state === "error") failed = true;
+          if (busy(after[k])) running = true;
+        });
+        capInfo = d;
+        if (finished) { loadSubs(finished); toast(finished === "auto" ? "Captions ready" : "Translation ready"); }
+        else if (menu.getAttribute("data-view") === "cc" && !menu.hidden) renderCCView();
+        if (failed) toast("Caption job failed");
+        if (running && !finished) pollJobs();
+      }).catch(pollJobs);
     }, 2000);
+  }
+  function startJob(url, msg) {
+    fetch(url, { method: "POST" }).then(function (r) { return r.json(); }).then(function (st) {
+      if (!st.ok) { toast(st.error || "Failed"); return; }
+      loadSubs();  // picks up the queued state and starts polling
+    });
+    toast(msg);
+  }
+  function generateCaptions() { capInfo.auto = { state: "queued", progress: 0 }; startJob("/subs/" + vid + "/generate", "Generating captions…"); }
+  function translateTo(lang, name) {
+    (capInfo.translate || []).forEach(function (t) { if (t.lang === lang) { t.state = "queued"; t.progress = 0; } });
+    startJob("/subs/" + vid + "/translate/" + lang, "Translating to " + name + "…");
   }
   loadSubs();
 
@@ -430,14 +451,22 @@
     renderList("Subtitles/CC",
       [{ v: -1, label: "Off" }].concat(subs.map(function (s, i) { return { v: i, label: s.label }; })), ccIndex, "cc");
     menu.setAttribute("data-view", "cc");
-    var st = autoState.state, html;
-    if (st === "queued" || st === "running") {
-      html = row("Generating captions…", st === "queued" ? "Waiting" : Math.round(autoState.progress * 100) + "%", "noop", " disabled");
+    var st = capInfo.auto.state, html;
+    function pct(j) { return j.state === "queued" ? "Waiting" : Math.round((j.progress || 0) * 100) + "%"; }
+    if (busy(capInfo.auto)) {
+      html = row("Generating captions…", pct(capInfo.auto), "noop", " disabled");
     } else if (st === "done") {
       html = row("Regenerate captions", "", "gen");
     } else {
       html = row("✨ Auto-generate captions", st === "error" ? "Retry" : "Speech-to-text", "gen");
     }
+    (capInfo.translate || []).forEach(function (t) {
+      if (t.lang === capInfo.source_lang || t.state === "done") return;
+      html += busy(t)
+        ? row("Translating to " + t.name + "…", pct(t), "noop", " disabled")
+        : row("🌐 Translate to " + t.name, t.state === "error" ? "Retry" : "", "tr",
+              ' data-v="' + t.lang + '" data-name="' + t.name + '"');
+    });
     menu.insertAdjacentHTML("beforeend", '<div class="p-menu__sep"></div>' + html);
   }
   function renderMain() {
@@ -473,6 +502,7 @@
       SPEEDS.map(function (s) { return { v: s, label: s === 1 ? "Normal" : s + "" }; }), video.playbackRate, "speed");
     else if (m === "cc-view") renderCCView();
     else if (m === "gen") { generateCaptions(); renderCCView(); }
+    else if (m === "tr") { translateTo(b.getAttribute("data-v"), b.getAttribute("data-name")); renderCCView(); }
     else if (m === "bright-view") renderList("Brightness",
       [1, 0.8, 0.6, 0.4, 0.2, 0].map(function (v) { return { v: v, label: v === 1 ? "Normal" : Math.round(v * 100) + "%" }; }),
       typeof prefs.bright === "number" ? prefs.bright : 1, "bright");

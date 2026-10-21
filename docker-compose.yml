@@ -10,4 +10,12 @@ services:
       # Add folders in the UI as /videos/<subfolder>.
       - "Q:/Old Drive 2/Videos:/videos"
       - "C:/Users/al_ha/Desktop/mrRobotSongs:/media/mrRobotSongs"
+      # Whole drives, so folders added in the UI by their Windows path (C:/..., Q:/...)
+      # just work. Add a line per extra drive letter.
+      - "C:/:/host/c"
+      - "Q:/:/host/q"
+    environment:
+      - OTUBE_HOST_ROOT=/host
+      # Where the other mounts live on the PC (for "Show in folder" / "Copy path")
+      - OTUBE_PATH_MAP=/videos=Q:/Old Drive 2/Videos;/media/mrRobotSongs=C:/Users/al_ha/Desktop/mrRobotSongs
     restart: unless-stopped

@@ -130,7 +130,7 @@
       <div class="grid" id="grid"{% if playlist %} data-playlist="{{ playlist.id }}"{% endif %}>
         {% for v in videos %}
         <div class="card" data-title="{{ v.title|lower }}" data-id="{{ v.id }}" data-dur="{{ v.dur_secs }}"
-             data-native="{{ '1' if v.native else '0' }}" data-name="{{ v.title }}" data-path="{{ v.path }}">
+             data-native="{{ '1' if v.native else '0' }}" data-name="{{ v.title }}" data-path="{{ v.host_path }}">
           <a class="thumb" href="/watch/{{ v.id }}{{ '?list=' ~ playlist.id if playlist else '' }}">
             <img class="thumb__img" loading="lazy" src="/thumb/{{ v.id }}" alt="">
             <span class="badge">{{ v.duration }}</span>

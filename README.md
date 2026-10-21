@@ -7,8 +7,16 @@ remuxing of mkv/avi/etc. so they play in the browser.
 Player: prev/next, autoplay with "Up next" countdown, captions (sidecar .srt/.vtt/.ass,
 embedded text subs, or **auto-generated speech-to-text** via faster-whisper), speed,
 brightness dimmer, loop, theater, miniplayer, fullscreen, keyboard shortcuts (press `?`),
-and OS media keys. Set `OTUBE_WHISPER_MODEL` (tiny/base/small/medium/large-v3) to trade
+and OS media keys. Set `OTUBE_WHISPER_MODEL` (default large-v3-turbo; tiny/base/small/medium/large-v3) to trade
 caption speed for accuracy; the model downloads to `./data/models` on first use.
+Captions can be translated (Meta NLLB-200, offline) into the languages in
+`OTUBE_TRANSLATE_LANGS` (default `en,ar`).
+
+`docker-compose.yml` mounts whole drives under `/host` (`OTUBE_HOST_ROOT`), so folders can
+be added by their Windows path. Note the app listens on your network and can rename/delete
+files; use `127.0.0.1:8700:8700` in `ports` to keep it local to the PC.
+"Show in folder" / "Open in player" go through `otube-helper.ps1`, a small helper the
+launcher starts that listens on 127.0.0.1 only.
 
 ## Run with Docker
 

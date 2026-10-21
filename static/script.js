@@ -269,6 +269,33 @@
     });
   }
 
+  // --- Show in folder / Open in player ---
+  // Run directly by the server when it's on the PC; when it runs in Docker the
+  // server returns the host path and we pass it to the on-PC helper
+  // (otube-helper.ps1, started by the launcher, listening on 127.0.0.1 only).
+  var HELPER = "http://127.0.0.1:8701/";
+  function note(msg) {
+    var t = document.getElementById("note-toast");
+    if (!t) { t = document.createElement("div"); t.id = "note-toast"; t.className = "note-toast"; document.body.appendChild(t); }
+    t.textContent = msg; t.classList.add("show");
+    clearTimeout(note._t); note._t = setTimeout(function () { t.classList.remove("show"); }, 3500);
+  }
+  function hostAction(act, id, fallbackPath) {
+    fetch("/" + act + "/" + id, { method: "POST" })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (!d.ok) { note(d.error || "Failed"); return; }
+        if (!d.delegate) return;  // server handled it
+        return fetch(HELPER + act, { method: "POST", body: d.delegate })
+          .then(function (r) { if (!r.ok) throw new Error(); })
+          .catch(function () {
+            if (navigator.clipboard) navigator.clipboard.writeText(d.delegate);
+            note("Helper not running (start oTube from its desktop icon). Path copied to clipboard.");
+          });
+      })
+      .catch(function () { note("Failed"); });
+  }
+
   // --- Per-video context menu (grid cards AND the watch page) ---
   var menu = document.getElementById("ctx-menu");
   if (menu) {
@@ -326,10 +353,8 @@
         plPost(pid, act.slice(3), { vid: id }).then(function () { location.reload(); });
       } else if (act === "copy") {
         if (navigator.clipboard) navigator.clipboard.writeText(path);
-      } else if (act === "reveal") {
-        fetch("/reveal/" + id, { method: "POST" });
-      } else if (act === "open") {
-        fetch("/open/" + id, { method: "POST" });
+      } else if (act === "reveal" || act === "open") {
+        hostAction(act, id, path);
       } else if (act === "clear") {
         var p = loadProgress(); delete p[id]; saveProgress(p);
         if (card) {

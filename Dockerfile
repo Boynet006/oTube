@@ -13,7 +13,7 @@ COPY static/ static/
 
 # config.json, duration cache, thumbs and transcodes live here (mount a volume)
 # OTUBE_WHISPER_MODEL: tiny | base | small | medium | large-v3 (bigger = better, slower)
-ENV OTUBE_DATA=/data PYTHONUNBUFFERED=1 OTUBE_WHISPER_MODEL=small
+ENV OTUBE_DATA=/data PYTHONUNBUFFERED=1 OTUBE_WHISPER_MODEL=large-v3-turbo
 VOLUME /data
 EXPOSE 8700
 CMD ["python", "app.py"]

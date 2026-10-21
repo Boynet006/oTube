@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 import queue
+import re
 import subprocess
 import threading
 import time
@@ -64,6 +65,37 @@ def _save_dur_cache() -> None:
             json.dump({k: [v[0], v[1]] for k, v in _dur_cache.items()}, f)
     except Exception:
         pass
+
+
+# In Docker, host drives are mounted under OTUBE_HOST_ROOT (/host/c, /host/q, ...), so
+# folders can be added with their normal Windows paths (C:/Users/...).
+HOST_ROOT = os.environ.get("OTUBE_HOST_ROOT", "").rstrip("/")
+
+
+def to_local(path: str) -> str:
+    """'C:/Users/x' -> '/host/c/Users/x' when running with mounted host drives."""
+    m = re.match(r"^([A-Za-z]):[\\/]*(.*)$", path)
+    if HOST_ROOT and m:
+        return os.path.join(HOST_ROOT, m.group(1).lower(), m.group(2).replace("\\", "/")).rstrip("/")
+    return path
+
+
+PATH_MAP = [tuple(x.split("=", 1)) for x in os.environ.get("OTUBE_PATH_MAP", "").split(";") if "=" in x]
+
+
+def to_host(path: str) -> str:
+    """Container path -> the real path on the host: '/host/c/Users/x' -> 'C:/Users/x',
+    plus any OTUBE_PATH_MAP mounts. Unchanged when not running in Docker."""
+    for prefix, host in PATH_MAP:
+        prefix = prefix.rstrip("/")
+        if path == prefix or path.startswith(prefix + "/"):
+            return host.rstrip("/") + path[len(prefix):]
+    if HOST_ROOT and (path + "/").startswith(HOST_ROOT + "/"):
+        rest = path[len(HOST_ROOT):].strip("/")
+        letter, _, tail = rest.partition("/")
+        if letter:
+            return f"{letter.upper()}:/{tail}"
+    return path
 
 
 def load_config() -> dict:
@@ -193,9 +225,10 @@ def scan() -> list[dict]:
     cfg = load_config()
     items, cache = [], {}
     for folder in cfg.get("video_folders", []):
-        if not os.path.isdir(folder):
+        local = to_local(folder)
+        if not os.path.isdir(local):
             continue
-        for root, _dirs, files in os.walk(folder):
+        for root, _dirs, files in os.walk(local):
             for fn in files:
                 ext = os.path.splitext(fn)[1].lower()
                 if ext not in VIDEO_EXTS:
@@ -207,7 +240,7 @@ def scan() -> list[dict]:
                     mtime = os.path.getmtime(full)
                 except OSError:
                     continue
-                rec = {"id": vid, "path": full, "title": fn, "folder": folder,
+                rec = {"id": vid, "path": full, "host_path": to_host(full), "title": fn, "folder": folder,
                        "ext": ext, "size": size, "mtime": mtime,
                        "native": ext in NATIVE_EXTS}
                 cache[vid] = rec
@@ -398,8 +431,14 @@ def _auto_sub(vid: str) -> list[dict]:
             lang = json.load(f).get("lang", "")
     except Exception:
         lang = ""
-    label = "Auto-generated" + (f" ({lang.upper()})" if lang else "")
-    return [{"key": "auto", "label": label, "lang": lang, "src": vtt, "auto": True}]
+    name = LANG_NAMES.get(lang, lang.upper())
+    tracks = [{"key": "auto", "label": f"{name} (auto-generated)" if name else "Auto-generated",
+               "lang": lang, "src": vtt, "auto": True}]
+    for f in sorted(glob.glob(os.path.join(AUTO_SUBS_DIR, glob.escape(vid) + ".tr-*.vtt"))):
+        tl = os.path.basename(f)[len(vid) + 4:-4]
+        tracks.append({"key": f"tr-{tl}", "label": f"{LANG_NAMES.get(tl, tl)} (auto-translated)",
+                       "lang": tl, "src": f, "auto": True})
+    return tracks
 
 
 def _file_subs(r: dict) -> list[dict]:
@@ -442,7 +481,11 @@ def subs_list(vid):
     return {"tracks": [{"key": t["key"], "label": t["label"], "lang": t["lang"],
                         "src": url_for("subs_file", vid=vid, key=t["key"])}
                        for t in tracks],
-            "auto": _job_status(vid, has_auto=any(t.get("auto") for t in tracks))}
+            "auto": _job_status(vid, has_auto=any(t["key"] == "auto" for t in tracks)),
+            "source_lang": next((t["lang"] for t in tracks if t["key"] == "auto"), None),
+            "translate": [{"lang": l, "name": LANG_NAMES.get(l, l),
+                           **_job_status(f"{vid}:{l}", any(t["key"] == f"tr-{l}" for t in tracks))}
+                          for l in TRANSLATE_LANGS]}
 
 
 @app.route("/subs/<vid>/<key>.vtt")
@@ -474,8 +517,9 @@ def subs_file(vid, key):
 
 # ---- Auto-generated captions (speech-to-text with faster-whisper) ----
 # One background worker, one video at a time, so the CPU isn't swamped.
-WHISPER_MODEL = os.environ.get("OTUBE_WHISPER_MODEL", "small")
-_jobs: dict[str, dict] = {}       # vid -> {state: queued|running|error, progress, error}
+WHISPER_MODEL = os.environ.get("OTUBE_WHISPER_MODEL", "large-v3-turbo")
+CUE_MAX_SECS, CUE_MAX_CHARS = 5.0, 42  # keep each caption short and readable
+_jobs: dict[str, dict] = {}       # job key ("<vid>" or "<vid>:<lang>") -> {state, progress, error}
 _job_q: "queue.Queue[str]" = queue.Queue()
 _job_lock = threading.Lock()
 _worker = None
@@ -497,6 +541,26 @@ def _vtt_time(t: float) -> str:
     return f"{h:02d}:{m:02d}:{sec:02d}.{ms:03d}"
 
 
+def _split_cues(seg) -> list[tuple]:
+    """Break a Whisper segment into cues of at most CUE_MAX_SECS / CUE_MAX_CHARS,
+    using word timings so each cue is on screen only while it's being sung/said."""
+    words = [w for w in (seg.words or []) if w.word.strip()]
+    if not words:
+        text = seg.text.strip()
+        return [(seg.start, seg.end, text)] if text else []
+    cues, cur = [], []
+    for w in words:
+        if cur:
+            text = "".join(x.word for x in cur + [w]).strip()
+            if w.end - cur[0].start > CUE_MAX_SECS or len(text) > CUE_MAX_CHARS:
+                cues.append(cur)
+                cur = []
+        cur.append(w)
+    if cur:
+        cues.append(cur)
+    return [(c[0].start, c[-1].end, "".join(x.word for x in c).strip()) for c in cues]
+
+
 def _transcribe(vid: str) -> None:
     global _model
     r = get_rec(vid)
@@ -515,13 +579,25 @@ def _transcribe(vid: str) -> None:
     if not pcm:
         raise RuntimeError("no audio track")
     audio = np.frombuffer(pcm, np.int16).astype(np.float32) / 32768.0
-    segments, info = _model.transcribe(audio, vad_filter=True, beam_size=5)
+    segments, info = _model.transcribe(
+        audio, beam_size=5,
+        # No VAD: Silero VAD treats singing over music as "not speech" and drops
+        # most of a song. hallucination_silence_threshold handles real gaps instead.
+        vad_filter=False,
+        # Each window decoded on its own: stops one bad line repeating through a song.
+        condition_on_previous_text=False,
+        word_timestamps=True,                 # lets us split long segments into short cues
+        hallucination_silence_threshold=2.0,  # drop text "heard" in long music-only gaps
+        no_speech_threshold=0.6)
     total = info.duration or 0
     lines = ["WEBVTT", ""]
+    last_text = None
     for seg in segments:
-        text = seg.text.strip()
-        if text:
-            lines += [f"{_vtt_time(seg.start)} --> {_vtt_time(seg.end)}", text, ""]
+        for start, end, text in _split_cues(seg):
+            if text == last_text:  # collapse back-to-back duplicates
+                continue
+            last_text = text
+            lines += [f"{_vtt_time(start)} --> {_vtt_time(end)}", text, ""]
         if total:
             _jobs[vid]["progress"] = min(0.99, seg.end / total)
     tmp = os.path.join(AUTO_SUBS_DIR, vid + ".part.vtt")
@@ -534,28 +610,122 @@ def _transcribe(vid: str) -> None:
 
 def _caption_worker() -> None:
     while True:
-        vid = _job_q.get()
-        _jobs[vid] = {"state": "running", "progress": 0}
+        key = _job_q.get()
+        vid, _, lang = key.partition(":")
+        _jobs[key] = {"state": "running", "progress": 0}
         try:
-            _transcribe(vid)
-            _jobs.pop(vid, None)  # file on disk now reports "done"
+            if lang:
+                if not os.path.exists(os.path.join(AUTO_SUBS_DIR, vid + ".vtt")):
+                    _jobs[vid] = _jobs[key]  # transcribe first, sharing progress
+                    _transcribe(vid)
+                    _jobs.pop(vid, None)
+                _translate(vid, lang, key)
+            else:
+                _transcribe(vid)
+            _jobs.pop(key, None)  # file on disk now reports "done"
         except Exception as exc:  # noqa: BLE001
-            _jobs[vid] = {"state": "error", "progress": 0, "error": str(exc)[:300]}
+            _jobs.pop(vid, None) if lang else None
+            _jobs[key] = {"state": "error", "progress": 0, "error": str(exc)[:300]}
+
+
+# ---- Caption translation (Meta NLLB-200 via CTranslate2, fully offline after download) ----
+NLLB_REPO = os.environ.get("OTUBE_TRANSLATE_MODEL", "JustFrederik/nllb-200-distilled-600M-ct2-int8")
+TRANSLATE_LANGS = [c.strip() for c in os.environ.get("OTUBE_TRANSLATE_LANGS", "en,ar").split(",") if c.strip()]
+NLLB_CODES = {  # Whisper language code -> NLLB code
+    "en": "eng_Latn", "ar": "arb_Arab", "fr": "fra_Latn", "es": "spa_Latn", "de": "deu_Latn",
+    "it": "ita_Latn", "pt": "por_Latn", "tr": "tur_Latn", "ru": "rus_Cyrl", "fa": "pes_Arab",
+    "ur": "urd_Arab", "hi": "hin_Deva", "bn": "ben_Beng", "id": "ind_Latn", "ms": "zsm_Latn",
+    "zh": "zho_Hans", "ja": "jpn_Jpan", "ko": "kor_Hang", "nl": "nld_Latn", "sv": "swe_Latn",
+    "pl": "pol_Latn", "uk": "ukr_Cyrl", "he": "heb_Hebr", "el": "ell_Grek", "sw": "swh_Latn",
+}
+LANG_NAMES = {
+    "en": "English", "ar": "Arabic", "fr": "French", "es": "Spanish", "de": "German",
+    "it": "Italian", "pt": "Portuguese", "tr": "Turkish", "ru": "Russian", "fa": "Persian",
+    "ur": "Urdu", "hi": "Hindi", "bn": "Bengali", "id": "Indonesian", "ms": "Malay",
+    "zh": "Chinese", "ja": "Japanese", "ko": "Korean", "nl": "Dutch", "sv": "Swedish",
+    "pl": "Polish", "uk": "Ukrainian", "he": "Hebrew", "el": "Greek", "sw": "Swahili",
+}
+_mt = None  # (translator, sentencepiece)
+
+
+def _read_vtt(path: str) -> list[tuple]:
+    cues, lines = [], open(path, encoding="utf-8").read().split("\n")
+    i = 0
+    while i < len(lines):
+        if "-->" in lines[i]:
+            timing, text = lines[i].strip(), []
+            i += 1
+            while i < len(lines) and lines[i].strip():
+                text.append(lines[i].strip())
+                i += 1
+            cues.append((timing, " ".join(text)))
+        i += 1
+    return cues
+
+
+def _translate(vid: str, lang: str, key: str) -> None:
+    global _mt
+    with open(os.path.join(AUTO_SUBS_DIR, vid + ".json"), encoding="utf-8") as f:
+        src = json.load(f).get("lang", "")
+    if src not in NLLB_CODES or lang not in NLLB_CODES:
+        raise RuntimeError(f"can't translate {src or '?'} -> {lang}")
+    if _mt is None:
+        import ctranslate2
+        import sentencepiece
+        from huggingface_hub import snapshot_download
+        d = snapshot_download(NLLB_REPO, cache_dir=os.path.join(BASE, "models"))
+        _mt = (ctranslate2.Translator(d, device="cpu", compute_type="int8"),
+               sentencepiece.SentencePieceProcessor(model_file=os.path.join(d, "sentencepiece.bpe.model")))
+    translator, sp = _mt
+    cues = _read_vtt(os.path.join(AUTO_SUBS_DIR, vid + ".vtt"))
+    out, batch = ["WEBVTT", ""], 16
+    for b in range(0, len(cues), batch):
+        chunk = cues[b:b + batch]
+        if src == lang:
+            texts = [t for _, t in chunk]
+        else:
+            sources = [[NLLB_CODES[src]] + sp.encode(t, out_type=str) + ["</s>"] for _, t in chunk]
+            res = translator.translate_batch(sources, target_prefix=[[NLLB_CODES[lang]]] * len(sources),
+                                             beam_size=4, max_decoding_length=128)
+            texts = [sp.decode(r.hypotheses[0][1:]) for r in res]
+        for (timing, _), text in zip(chunk, texts):
+            # NLLB leaves spaces before punctuation/contractions ("Hi , I 'll go .")
+            text = re.sub(r"\s+([.,!?;:%)\]])", r"\1", text.strip())
+            text = re.sub(r"(\w)\s+'(\w)", r"\1'\2", text)
+            out += [timing, text, ""]
+        _jobs[key]["progress"] = min(0.99, (b + batch) / max(1, len(cues)))
+    tmp = os.path.join(AUTO_SUBS_DIR, f"{vid}.tr-{lang}.part")
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write("\n".join(out))
+    os.replace(tmp, os.path.join(AUTO_SUBS_DIR, f"{vid}.tr-{lang}.vtt"))
+
+
+def _enqueue(key: str) -> dict:
+    global _worker
+    with _job_lock:
+        if _jobs.get(key, {}).get("state") not in ("queued", "running"):
+            _jobs[key] = {"state": "queued", "progress": 0}
+            _job_q.put(key)
+        if _worker is None or not _worker.is_alive():
+            _worker = threading.Thread(target=_caption_worker, daemon=True)
+            _worker.start()
+    return dict(_jobs[key])
+
+
+@app.route("/subs/<vid>/translate/<lang>", methods=["POST"])
+def subs_translate(vid, lang):
+    if not get_rec(vid):
+        return {"ok": False, "error": "not found"}, 404
+    if lang not in NLLB_CODES:
+        return {"ok": False, "error": "unsupported language"}, 400
+    return {"ok": True, **_enqueue(f"{vid}:{lang}")}
 
 
 @app.route("/subs/<vid>/generate", methods=["POST"])
 def subs_generate(vid):
-    global _worker
     if not get_rec(vid):
         return {"ok": False, "error": "not found"}, 404
-    with _job_lock:
-        if _jobs.get(vid, {}).get("state") not in ("queued", "running"):
-            _jobs[vid] = {"state": "queued", "progress": 0}
-            _job_q.put(vid)
-        if _worker is None or not _worker.is_alive():
-            _worker = threading.Thread(target=_caption_worker, daemon=True)
-            _worker.start()
-    return {"ok": True, **_jobs[vid]}
+    return {"ok": True, **_enqueue(vid)}
 
 
 @app.route("/subs/<vid>/status")
@@ -592,6 +762,8 @@ def browse():
     paths itself). Also reports how many videos sit directly in a folder."""
     import string
     path = request.args.get("path", "")
+    if HOST_ROOT:
+        return _browse_host(path)
     if not path:
         if os.name == "nt":
             drives = [f"{d}:/" for d in string.ascii_uppercase if os.path.exists(f"{d}:/")]
@@ -625,6 +797,33 @@ def browse():
         parent = ""  # back to the drive list
     return {"path": path.replace("\\", "/"), "parent": parent.replace("\\", "/"),
             "is_root": False, "dirs": dirs, "video_count": vids}
+
+
+def _browse_host(path: str):
+    """Folder browser over the mounted host drives, speaking Windows paths."""
+    if not path:
+        drives = sorted(d for d in os.listdir(HOST_ROOT) if os.path.isdir(os.path.join(HOST_ROOT, d)))
+        return {"path": "", "parent": None, "is_root": True, "video_count": 0,
+                "dirs": [{"name": f"{d.upper()}:/", "path": f"{d.upper()}:/"} for d in drives]}
+    local = to_local(path)
+    dirs, vids = [], 0
+    try:
+        with os.scandir(local) as it:
+            for e in it:
+                try:
+                    if e.is_dir(follow_symlinks=False):
+                        if not e.name.startswith(".") and not e.name.startswith("$"):
+                            dirs.append({"name": e.name, "path": to_host(os.path.join(local, e.name))})
+                    elif os.path.splitext(e.name)[1].lower() in VIDEO_EXTS:
+                        vids += 1
+                except OSError:
+                    continue
+    except OSError as exc:
+        return {"path": to_host(local), "parent": "", "dirs": [], "error": str(exc), "video_count": 0}
+    dirs.sort(key=lambda x: x["name"].lower())
+    parent_local = os.path.dirname(local)
+    parent = "" if parent_local in (HOST_ROOT, os.path.dirname(HOST_ROOT)) else to_host(parent_local)
+    return {"path": to_host(local), "parent": parent, "is_root": False, "dirs": dirs, "video_count": vids}
 
 
 @app.route("/add_folder", methods=["POST"])
@@ -672,6 +871,10 @@ def reveal(vid):
     r = get_rec(vid)
     if not r:
         return {"ok": False, "error": "not found"}, 404
+    if os.path.exists("/.dockerenv"):
+        # A container can't open the host's file manager; the browser forwards
+        # this to the on-PC helper (otube-helper.ps1) instead.
+        return {"ok": True, "delegate": r["host_path"]}
     path = r["path"]
     try:
         import sys
@@ -692,6 +895,8 @@ def open_external(vid):
     r = get_rec(vid)
     if not r:
         return {"ok": False, "error": "not found"}, 404
+    if os.path.exists("/.dockerenv"):
+        return {"ok": True, "delegate": r["host_path"]}
     try:
         import sys
         if sys.platform.startswith("win"):

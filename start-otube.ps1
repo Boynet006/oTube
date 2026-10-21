@@ -3,6 +3,10 @@ $ErrorActionPreference = 'SilentlyContinue'
 Set-Location $PSScriptRoot
 $url = 'http://localhost:8700'
 
+# Helper for "Show in folder" / "Open in player" (exits at once if already running).
+Start-Process powershell.exe -WindowStyle Hidden -ArgumentList @(
+    '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$PSScriptRoot\otube-helper.ps1`"")
+
 function DockerReady { docker info *> $null; return $LASTEXITCODE -eq 0 }
 
 if (-not (DockerReady)) {
