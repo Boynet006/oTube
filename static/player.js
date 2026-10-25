@@ -731,7 +731,7 @@
       if (!dg.on) {
         // forgiving like YouTube: small wobble during a click is still a click
         var dist = Math.hypot(e.screenX - dg.x, e.screenY - dg.y);
-        if (dist < 12 || (Date.now() - dg.t < 200 && dist < 20)) return;
+        if (dist < 30 || (Date.now() - dg.t < 250 && dist < 45)) return;
         dg.on = true;
         try { wrap.setPointerCapture(dg.id); } catch (err) {}
         wrap.classList.add("p-dragging");
