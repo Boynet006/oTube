@@ -203,7 +203,21 @@
           <div class="stat"><b data-stat="size">{{ stats.size }}</b><span>on disk</span></div>
           <div class="stat"><b data-stat="thumbs">{{ stats.thumbs }}</b><span>thumbnails</span></div>
           <div class="stat"><b data-stat="captions">{{ stats.captions }}</b><span>caption files</span></div>
-          <div class="stat"><b data-stat="cache">{{ stats.cache }}</b><span>cache</span></div>
+          <div class="stat"><b data-stat="transcoded">{{ stats.transcoded }}</b><span>converted videos</span></div>
+        </div>
+        <div class="srow" data-search="converted transcoded videos cache clear delete space disk mkv avi">
+          <div class="sr-text"><b>Converted videos</b>
+            <span>Formats browsers can't play directly (MKV, AVI, TS…) are converted once and kept so they start instantly next time.
+              Safe to delete: the originals are never touched; a video is converted again when you next play it.
+              Now: <b data-stat="transcoded">{{ stats.transcoded }}</b> in <span data-stat="transcodedCount">{{ stats.transcodedCount }}</span> files.</span></div>
+          <button type="button" class="pin-btn danger-ghost" id="clear-transcoded">Clear converted videos</button>
+        </div>
+        {{ select('transcodeMaxGB', 'Keep at most', 'When the converted-video cache gets bigger, the least recently watched copies are removed', s.transcodeMaxGB, [(5,'5 GB'),(10,'10 GB'),(20,'20 GB'),(50,'50 GB'),(100,'100 GB'),(0,'No limit')]) }}
+        {{ select('transcodeMaxDays', 'Remove unwatched copies after', 'Delete converted copies you haven\'t watched for a while', s.transcodeMaxDays, [(0,'Never'),(1,'1 day'),(7,'7 days'),(30,'30 days'),(90,'90 days')]) }}
+        <div class="srow" data-search="thumbnails cache clear rebuild">
+          <div class="sr-text"><b>Thumbnails</b>
+            <span><b data-stat="thumbsSize">{{ stats.thumbsSize }}</b>. Clearing rebuilds them in the background.</span></div>
+          <button type="button" class="pin-btn" id="clear-thumbs">Rebuild thumbnails</button>
         </div>
         <div class="srow" data-search="rescan refresh library scan new files">
           <div class="sr-text"><b>Rescan library</b><span>Pick up new or removed files now. Last scan: <span data-stat="scanned">{{ stats.scanned }}</span></span></div>

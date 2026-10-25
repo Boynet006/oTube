@@ -182,6 +182,39 @@
     }).catch(function () { rescan.disabled = false; rescan.textContent = "↻ Rescan now"; });
   });
 
+  // ---- cache clearing ----
+  function setStats(st) {
+    Object.keys(st || {}).forEach(function (k) {
+      document.querySelectorAll('[data-stat="' + k + '"]').forEach(function (el) { el.textContent = st[k]; });
+    });
+  }
+  function clearCache(btn, what, opts) {
+    window.otubeConfirm(opts).then(function (ok) {
+      if (!ok) return;
+      var label = btn.textContent;
+      btn.disabled = true; btn.textContent = "Clearing…";
+      fetch("/api/cache/clear", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ what: what }) })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          setStats(d.stats);
+          btn.textContent = d.ok ? "✓ Freed " + d.freed : "Failed";
+          setTimeout(function () { btn.disabled = false; btn.textContent = label; }, 2500);
+        })
+        .catch(function () { btn.disabled = false; btn.textContent = label; });
+    });
+  }
+  var ct = document.getElementById("clear-transcoded");
+  if (ct) ct.addEventListener("click", function () {
+    clearCache(ct, "transcoded", { title: "Clear converted videos?",
+      text: "Frees the space used by converted copies. Your original videos aren't touched; a video is converted again the next time you play it (the first play takes a little longer).",
+      confirm: "Clear", danger: true });
+  });
+  var cth = document.getElementById("clear-thumbs");
+  if (cth) cth.addEventListener("click", function () {
+    clearCache(cth, "thumbs", { title: "Rebuild thumbnails?",
+      text: "Deletes all thumbnails; they're recreated in the background over the next few minutes.", confirm: "Rebuild" });
+  });
+
   // ---- devices: copy address ----
   var cp = document.getElementById("copy-lan");
   if (cp) cp.addEventListener("click", function () {

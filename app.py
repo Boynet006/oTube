@@ -157,6 +157,8 @@ SETTINGS_DEFAULTS = {
     "miniMode": False,
     "display": {"b": 1, "c": 1, "n": False, "w": 50},
     "whisperModel": os.environ.get("OTUBE_WHISPER_MODEL", "large-v3-turbo"),
+    "transcodeMaxGB": 20,      # converted-video cache limit (0 = no limit); least recently watched go first
+    "transcodeMaxDays": 0,     # remove copies not watched for N days (0 = keep)
 }
 WHISPER_MODELS = ["tiny", "base", "small", "medium", "large-v3-turbo", "large-v3"]
 SORT_ICONS = {'name': '<svg viewBox="0 0 24 24" width="22" height="22"><text x="2" y="11" font-size="9" font-weight="700" fill="currentColor">A</text><text x="2" y="21" font-size="9" font-weight="700" fill="currentColor">Z</text><path fill="currentColor" d="M16 4h2v12h3l-4 4-4-4h3z"/></svg>', 'newest': '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm0 18a8 8 0 1 1 0-16 8 8 0 0 1 0 16zm.5-13H11v6l5.2 3.2.8-1.3-4.5-2.7V7z"/></svg>', 'size': '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M2 20h20v-4H2v4zm2-3h2v2H4v-2zM2 4v4h20V4H2zm4 3H4V5h2v2zm-4 7h20v-4H2v4zm2-3h2v2H4v-2z"/></svg>', 'duration': '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M15 1H9v2h6V1zm-4 13h2V8h-2v6zm8.03-6.61 1.42-1.42c-.43-.51-.9-.99-1.41-1.41l-1.42 1.42A8.96 8.96 0 0 0 12 4a9 9 0 1 0 9 9c0-2.12-.74-4.07-1.97-5.61zM12 20a7 7 0 1 1 0-14 7 7 0 0 1 0 14z"/></svg>', 'random': '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M10.59 9.17 5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm.33 9.41-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z"/></svg>'}
@@ -662,6 +664,11 @@ def stream(vid):
             except OSError:
                 pass
             return _live_stream(r)
+        threading.Thread(target=prune_transcodes, daemon=True).start()
+    try:
+        os.utime(cache)  # last watched -> least-recently-watched copies are removed first
+    except OSError:
+        pass
     return send_file(cache, conditional=True)
 
 
@@ -1157,6 +1164,79 @@ def _dir_size(path: str) -> int:
     return total
 
 
+# ---- Converted-video cache (mkv/avi/ts/... -> browser-playable copies) ----
+def _transcode_files() -> list[tuple]:
+    """[(path, size, mtime)] of finished converted copies (in-progress .part files excluded)."""
+    out = []
+    try:
+        for e in os.scandir(TRANS_DIR):
+            if e.is_file() and ".part." not in e.name and e.name.endswith((".mp4", ".webm")):
+                st = e.stat()
+                out.append((e.path, st.st_size, st.st_mtime))
+    except OSError:
+        pass
+    return out
+
+
+def prune_transcodes() -> int:
+    """Apply the size/age limits from Settings. Returns bytes freed."""
+    s = get_settings()
+    max_bytes = float(s.get("transcodeMaxGB") or 0) * 1024 ** 3
+    max_age = float(s.get("transcodeMaxDays") or 0) * 86400
+    files = sorted(_transcode_files(), key=lambda f: f[2])  # least recently watched first
+    now, freed = time.time(), 0
+    total = sum(f[1] for f in files)
+    for path, size, mtime in files:
+        if now - mtime < 120:  # never remove something that's playing right now
+            continue
+        too_old = max_age and now - mtime > max_age
+        too_big = max_bytes and total > max_bytes
+        if not (too_old or too_big):
+            continue
+        try:
+            os.remove(path)
+            total -= size
+            freed += size
+        except OSError:
+            pass
+    return freed
+
+
+def _prune_loop() -> None:
+    while True:
+        time.sleep(3600)
+        prune_transcodes()
+
+
+threading.Thread(target=_prune_loop, daemon=True).start()
+
+
+@app.route("/api/cache/clear", methods=["POST"])
+def api_cache_clear():
+    """Delete cached files on demand: converted videos or thumbnails."""
+    what = (request.get_json(silent=True) or {}).get("what")
+    freed, n = 0, 0
+    if what == "transcoded":
+        for path, size, mtime in _transcode_files():
+            if time.time() - mtime < 120:
+                continue  # skip a copy that is being watched right now
+            try:
+                os.remove(path); freed += size; n += 1
+            except OSError:
+                pass
+    elif what == "thumbs":
+        for e in os.scandir(THUMB_DIR):
+            try:
+                size = e.stat().st_size
+                os.remove(e.path); freed += size; n += 1
+            except OSError:
+                pass
+        _wake_warmer()  # rebuild them in the background
+    else:
+        return {"ok": False, "error": "unknown cache"}, 400
+    return {"ok": True, "freed": fmt_size(freed), "files": n, "stats": library_stats()}
+
+
 def library_stats() -> dict:
     items = visible(scan())
     cfg = load_config()
@@ -1168,6 +1248,9 @@ def library_stats() -> dict:
         "thumbs": len(os.listdir(THUMB_DIR)),
         "captions": len(glob.glob(os.path.join(AUTO_SUBS_DIR, "*.vtt"))),
         "cache": fmt_size(_dir_size(TRANS_DIR) + _dir_size(THUMB_DIR)),
+        "transcoded": fmt_size(sum(f[1] for f in _transcode_files())),
+        "transcodedCount": len(_transcode_files()),
+        "thumbsSize": fmt_size(_dir_size(THUMB_DIR)),
         "models": fmt_size(_dir_size(os.path.join(BASE, "models"))),
         "scanned": rel_time(_scan_state["at"]) if _scan_state["at"] else "never",
     }
