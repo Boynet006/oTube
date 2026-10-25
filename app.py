@@ -522,6 +522,11 @@ def watch(vid):
     next_item = next((v for v in upnext if v["id"] == next_vid), None)
     liked = find_playlist(load_playlists(), LIKED_ID)
     cfg = load_config()
+    if request.args.get("embed"):
+        # Player-only page used inside the mini player (keeps list/shuffle + embed on next/prev)
+        lq = ("?list=" + playlist["id"] + ("&shuffle=" + shuffle_seed if shuffle_seed else "")) if playlist else ""
+        return render_template("embed.html", video=cur, next_vid=next_vid, next_item=next_item,
+                               prev_vid=prev_vid, eq=(lq + "&embed=1") if lq else "?embed=1")
     return render_template("watch.html", video=cur, upnext=upnext, next_vid=next_vid,
                            next_item=next_item, prev_vid=prev_vid,
                            playlist=playlist, pos=pos, shuffle_seed=shuffle_seed,

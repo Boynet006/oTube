@@ -694,5 +694,24 @@
   }
 
   window.otubeCurrentTime = function () { return video.currentTime; };
+
+  // ---------- embedded in the mini player: tell the parent page what's playing ----------
+  if (video.getAttribute("data-embed") && window.parent !== window) {
+    btn("theater").hidden = true;
+    var lastPost = 0;
+    var post = function (force) {
+      var now = Date.now();
+      if (!force && now - lastPost < 1000) return;
+      lastPost = now;
+      window.parent.postMessage({ type: "otube-mini", vid: vid, title: title, t: video.currentTime,
+                                  d: dur(), paused: video.paused }, location.origin);
+    };
+    ["loadedmetadata", "play", "pause", "ended"].forEach(function (ev) { video.addEventListener(ev, function () { post(true); }); });
+    video.addEventListener("timeupdate", function () { post(false); });
+    window.addEventListener("message", function (e) {
+      if (e.origin !== location.origin || !e.data || e.data.type !== "otube-cmd") return;
+      if (e.data.cmd === "toggle") togglePlay();
+    });
+  }
   syncPlay(); syncTime();
 })();

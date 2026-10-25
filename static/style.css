@@ -941,3 +941,84 @@ a.shuffle-btn { text-decoration: none; }
 .chip-wrap:has(.chip.active) .chip-more:hover, .chip-wrap:has(.chip.active) .chip-more.open { background: rgba(0,0,0,.12); }
 .chip-more:hover, .chip-more.open { background: rgba(255,255,255,.15); }
 @media (hover: none) { .chip-more { display: grid !important; } .chip-wrap .chip__n { visibility: hidden; } }
+
+/* ===== App-wide dimmer + night light (driven by --app-dim / --app-warm) ===== */
+html::after, html::before {
+  content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 2147483646;
+}
+html::after { background: rgba(0,0,0,var(--app-dim, 0)); }
+html::before { z-index: 2147483645; background: rgb(255,138,40); mix-blend-mode: multiply; opacity: var(--app-warm, 0); }
+html.embed::after, html.embed::before { display: none; }   /* the parent page already covers the mini player */
+/* fullscreen video leaves the page's layers behind, so carry the dimmer along */
+.p.fs::after { content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 60; background: rgba(0,0,0,var(--app-dim, 0)); }
+.p.fs::before { content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 59; background: rgb(255,138,40); mix-blend-mode: multiply; opacity: var(--app-warm, 0); }
+
+.topbar__right { gap: 8px; }
+.display-ctl { position: relative; }
+#display-btn.on { color: #ffd54a; }
+.display-pop {
+  position: absolute; right: 0; top: 46px; z-index: 140; width: 280px; padding: 14px 16px 12px;
+  background: #282828; border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,.6);
+}
+.display-pop[hidden] { display: none; }
+.dp-head { font-weight: 700; font-size: 15px; margin-bottom: 10px; }
+.dp-row { display: flex; align-items: center; justify-content: space-between; font-size: 13.5px; margin: 10px 0 6px; }
+.dp-val { font-weight: 600; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.dp-range {
+  -webkit-appearance: none; appearance: none; width: 100%; height: 4px; border-radius: 2px; margin: 4px 0;
+  background: linear-gradient(to right, var(--text) var(--fill, 100%), #4a4a4a var(--fill, 100%)); cursor: pointer;
+}
+.dp-range::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; border-radius: 50%; background: #fff; border: none; }
+.dp-range::-moz-range-thumb { width: 16px; height: 16px; border-radius: 50%; background: #fff; border: none; }
+.dp-range.dp-warm { background: linear-gradient(to right, #ffb35c var(--fill, 50%), #4a4a4a var(--fill, 50%)); }
+.display-pop.night-off .dp-warm { opacity: .45; }
+.dp-switch { width: 36px; height: 20px; border-radius: 10px; border: none; background: #4a4a4a; position: relative; cursor: pointer; padding: 0; }
+.dp-switch span { position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: left .15s; }
+.dp-switch.on { background: #ff9f43; }
+.dp-switch.on span { left: 18px; }
+.dp-presets { display: flex; gap: 6px; margin-top: 14px; }
+.dp-presets button { flex: 1; height: 30px; border-radius: 15px; border: none; background: #3a3a3a; color: var(--text); font-weight: 600; font-size: 12.5px; cursor: pointer; }
+.dp-presets button:hover { background: #4a4a4a; }
+.dp-note { color: var(--text-dim); font-size: 11.5px; margin: 10px 0 0; line-height: 1.4; }
+
+/* ===== Mini player toggle + dock ===== */
+.mini-toggle.on { background: #1f3550; border-color: #2f5f8f; color: #9fd0ff; }
+.mini-toggle.on:hover { background: #26405f; }
+.mini {
+  position: fixed; right: 16px; bottom: 16px; z-index: 125; width: 400px;
+  background: #000; border-radius: 12px; overflow: hidden; box-shadow: 0 12px 40px rgba(0,0,0,.7);
+  display: flex; flex-direction: column; transition: width .2s, height .2s;
+}
+.mini[hidden] { display: none; }
+.mini__bar {
+  display: flex; align-items: center; gap: 2px; height: 40px; padding: 0 4px 0 12px;
+  background: #1c1c1c; cursor: grab; user-select: none; touch-action: none;
+}
+.mini.dragging .mini__bar { cursor: grabbing; }
+.mini.dragging .mini__frame { pointer-events: none; }
+.mini__title { flex: 1; min-width: 0; font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mini__btn { width: 34px; height: 34px; border: none; background: none; color: var(--text); border-radius: 50%; cursor: pointer; display: grid; place-items: center; }
+.mini__btn:hover { background: #3a3a3a; }
+.mini__frame { width: 100%; aspect-ratio: 16 / 9; border: 0; display: block; background: #000; }
+.mini--large { left: 50% !important; top: 50% !important; right: auto !important; bottom: auto !important;
+  transform: translate(-50%, -50%); width: min(1200px, 92vw, calc((100vh - 100px) * 16 / 9)); z-index: 126; }
+.mini--large .mini__bar { cursor: default; }
+.mini-scrim { position: fixed; inset: 0; z-index: 124; background: rgba(0,0,0,.7); }
+.mini-scrim[hidden] { display: none; }
+@media (max-width: 640px) { .mini { width: calc(100vw - 24px); right: 12px; bottom: 12px; } .mini-toggle span { display: none; } }
+
+/* embed page (inside the mini player) */
+body.embed { margin: 0; background: #000; overflow: hidden; }
+.embed .player-wrap { border-radius: 0; height: 100vh; }
+.embed #player { width: 100vw; height: 100vh; max-height: none; aspect-ratio: auto; }
+.embed .p-pill .p-btn { width: 36px; height: 36px; }
+.embed .p-pill { height: 40px; }
+.embed .p-bar { height: 40px; }
+
+/* ===== Confirm dialog ===== */
+.confirm-modal { width: 420px; }
+.confirm-modal .pin-text { white-space: pre-line; word-break: break-word; }
+.pin-icon.danger { background: #3a1a22; color: #ff6b6b; }
+.confirm-actions { width: 100%; margin-top: 8px; }
+.cf-safe { background: #3ea6ff; color: #0f0f0f; }
+.cf-safe:hover:not(:disabled) { background: #65b8ff; }

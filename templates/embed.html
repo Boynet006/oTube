@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en" class="embed">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ video.title }} — oTube</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body class="embed">
+  <div class="player-wrap" id="player-wrap">
+    <video id="player" controls playsinline preload="auto"
+           poster="/thumb/{{ video.id }}"
+           data-id="{{ video.id }}" data-title="{{ video.title }}" data-embed="1"
+           {% if prev_vid %}data-prev="/watch/{{ prev_vid }}{{ eq }}"{% endif %}
+           {% if next_item %}data-next-title="{{ next_item.title }}" data-next-thumb="/thumb/{{ next_item.id }}"{% endif %}
+           {% if next_vid %}data-next="/watch/{{ next_vid }}{{ eq }}"{% endif %}>
+      <source src="/stream/{{ video.id }}" type="video/mp4">
+    </video>
+  </div>
+  <script src="{{ url_for('static', filename='player.js') }}"></script>
+</body>
+</html>

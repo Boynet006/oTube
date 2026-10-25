@@ -11,6 +11,50 @@
     try { localStorage.setItem(KEY, JSON.stringify(p)); } catch (e) {}
   }
 
+  // --- Confirm dialog (replaces window.confirm) ---
+  // opts: { title, text, confirm, danger } -> Promise<boolean>
+  function confirmDialog(opts) {
+    return new Promise(function (resolve) {
+      var prev = document.activeElement;
+      var ov = document.createElement("div");
+      ov.className = "modal-overlay pin-overlay";
+      ov.innerHTML =
+        '<div class="modal pin-modal confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="cf-t" aria-describedby="cf-d">' +
+        '<div class="pin-icon' + (opts.danger ? ' danger' : '') + '">' + (opts.icon || "") + '</div>' +
+        '<h2 class="pin-title" id="cf-t"></h2><p class="pin-text" id="cf-d"></p>' +
+        '<div class="pin-actions confirm-actions"><span class="pin-spacer"></span>' +
+        '<button type="button" class="pin-btn cf-no">Cancel</button>' +
+        '<button type="button" class="pin-btn pin-ok cf-yes' + (opts.danger ? '' : ' cf-safe') + '"></button></div></div>';
+      ov.querySelector("#cf-t").textContent = opts.title;
+      ov.querySelector("#cf-d").textContent = opts.text || "";
+      ov.querySelector(".cf-yes").textContent = opts.confirm || "OK";
+      document.body.appendChild(ov);
+      function done(v) {
+        ov.remove(); document.removeEventListener("keydown", key, true);
+        if (prev && prev.focus) prev.focus();
+        resolve(v);
+      }
+      function key(e) {
+        if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); done(false); }
+        else if (e.key === "Tab") {  // keep focus inside
+          var b = ov.querySelectorAll("button"), f = b[0], l = b[b.length - 1];
+          if (e.shiftKey && document.activeElement === f) { e.preventDefault(); l.focus(); }
+          else if (!e.shiftKey && document.activeElement === l) { e.preventDefault(); f.focus(); }
+        }
+      }
+      document.addEventListener("keydown", key, true);
+      ov.querySelector(".cf-no").addEventListener("click", function () { done(false); });
+      ov.querySelector(".cf-yes").addEventListener("click", function () { done(true); });
+      ov.addEventListener("mousedown", function (e) { if (e.target === ov) done(false); });
+      // destructive actions focus Cancel by default (safer); others focus the action
+      setTimeout(function () { ov.querySelector(opts.danger ? ".cf-no" : ".cf-yes").focus(); }, 20);
+    });
+  }
+  window.otubeConfirm = confirmDialog;
+  var TRASH = '<svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true"><path fill="currentColor" d="M6 19a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>';
+  var FOLDER_X = '<svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true"><path fill="currentColor" d="M10 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8zm4.6 6 1.4 1.4-1.6 1.6 1.6 1.6-1.4 1.4-1.6-1.6-1.6 1.6-1.4-1.4 1.6-1.6-1.6-1.6 1.4-1.4 1.6 1.6z"/></svg>';
+  var LIST_X = '<svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true"><path fill="currentColor" d="M3 6h12v2H3zm0 4h12v2H3zm0 4h8v2H3zm11.4 1.4L16 13.8l2 2 2-2 1.4 1.4-2 2 2 2-1.4 1.4-2-2-2 2-1.4-1.4 2-2z"/></svg>';
+
   // --- Sidebar toggle ---
   var menuBtn = document.getElementById("menu-toggle");
   var sidebar = document.getElementById("sidebar");
@@ -385,8 +429,11 @@
     var selRemove = document.getElementById("sel-remove");
     if (selRemove) selRemove.addEventListener("click", function () {
       var n = selected.length;
-      if (!window.confirm("Remove " + n + " video" + (n === 1 ? "" : "s") + " from this playlist?\n\nThe files themselves are not touched.")) return;
-      plPost(selRemove.getAttribute("data-pid"), "remove", { vid: selected }).then(function () { location.reload(); });
+      confirmDialog({ title: "Remove " + n + " video" + (n === 1 ? "" : "s") + " from this playlist?",
+                      text: "The video files themselves are not touched.", confirm: "Remove", danger: true, icon: LIST_X })
+        .then(function (ok) {
+          if (ok) plPost(selRemove.getAttribute("data-pid"), "remove", { vid: selected }).then(function () { location.reload(); });
+        });
     });
     document.addEventListener("keydown", function (e) {
       var t = e.target;
@@ -647,12 +694,17 @@
     } else if (act === "up" || act === "down") {
       postForm("/folder_move", { folder_path: c.folder, dir: act }).then(function () { location.reload(); });
     } else if (act === "remove") {
-      if (!window.confirm('Remove "' + c.name + '" from oTube?\n\nThe folder and its videos stay on disk; it just won\'t be listed here.')) return;
-      var fd = new FormData(); fd.append("folder_path", c.folder);
-      fetch("/remove_folder", { method: "POST", body: fd }).then(function () {
-        var u = new URL(location.href);
-        if (u.searchParams.get("folder") === c.folder) location.href = "/"; else location.reload();
-      });
+      confirmDialog({ title: 'Remove "' + c.name + '" from oTube?',
+                      text: "The folder and its videos stay on your disk. It just won't be listed here anymore. You can add it back any time.",
+                      confirm: "Remove folder", danger: true, icon: FOLDER_X })
+        .then(function (ok) {
+          if (!ok) return;
+          var fd = new FormData(); fd.append("folder_path", c.folder);
+          fetch("/remove_folder", { method: "POST", body: fd }).then(function () {
+            var u = new URL(location.href);
+            if (u.searchParams.get("folder") === c.folder) location.href = "/"; else location.reload();
+          });
+        });
     }
   }
   document.addEventListener("click", function (e) {
@@ -675,8 +727,11 @@
       var n = window.prompt("Rename playlist:", c.name);
       if (n && n.trim() && n.trim() !== c.name) plPost(c.pid, "rename", { name: n.trim() }).then(function () { location.reload(); });
     } else if (act === "pl-delete") {
-      if (!window.confirm('Delete the playlist "' + c.name + '"?\n\nThe videos themselves are not touched.')) return;
-      plPost(c.pid, "delete").then(function () { if (here) location.href = "/"; else location.reload(); });
+      confirmDialog({ title: 'Delete the playlist "' + c.name + '"?', text: "The videos themselves are not touched.",
+                      confirm: "Delete playlist", danger: true, icon: LIST_X })
+        .then(function (ok) {
+          if (ok) plPost(c.pid, "delete").then(function () { if (here) location.href = "/"; else location.reload(); });
+        });
     }
   }
   // Right-click (or the keyboard menu key) on a folder chip opens the same menu
@@ -818,7 +873,10 @@
             .catch(function () { alert("Rename failed."); });
         }
       } else if (act === "delete") {
-        if (window.confirm("Delete this video FROM DISK permanently?\n\n" + name)) {
+        confirmDialog({ title: "Delete this video from disk?",
+                        text: name + "\n\nThe file is permanently deleted from your computer. This can't be undone.",
+                        confirm: "Delete forever", danger: true, icon: TRASH }).then(function (ok) {
+          if (!ok) return;
           fetch("/delete/" + id, { method: "POST" })
             .then(function (res) { return res.json(); })
             .then(function (d) {
@@ -826,7 +884,7 @@
               if (isWatch) window.location.href = "/"; else if (card) card.remove();
             })
             .catch(function () { alert("Delete failed."); });
-        }
+        });
       }
     });
   }
@@ -953,8 +1011,9 @@
   var plDelete = document.getElementById("pl-delete");
   if (plDelete) {
     plDelete.addEventListener("click", function () {
-      if (window.confirm('Delete the playlist "' + plDelete.getAttribute("data-name") + '"?\n\nThe videos themselves are not touched.'))
-        plPost(plDelete.getAttribute("data-pid"), "delete").then(function () { location.href = "/"; });
+      confirmDialog({ title: 'Delete the playlist "' + plDelete.getAttribute("data-name") + '"?',
+                      text: "The videos themselves are not touched.", confirm: "Delete playlist", danger: true, icon: LIST_X })
+        .then(function (ok) { if (ok) plPost(plDelete.getAttribute("data-pid"), "delete").then(function () { location.href = "/"; }); });
     });
   }
 
@@ -1075,4 +1134,190 @@
     c.appendChild(document.createTextNode(" ")); c.appendChild(span);
     if (!n && c.getAttribute("data-f") !== "all") (c.closest(".chip-wrap") || c).hidden = true;
   });
+})();
+
+// ===== App-wide display: brightness + night light (☀ in the top bar) =====
+// A fixed overlay above everything (html::after dims, html::before warms with
+// multiply blending), so it works on every page element, thumbnails, the mini
+// player and fullscreen video, without touching their own styles.
+(function () {
+  "use strict";
+  var KEY = "otube.display", btn = document.getElementById("display-btn");
+  var st = { b: 1, n: false, w: 50 };
+  try { var saved = JSON.parse(localStorage.getItem(KEY) || "{}"); for (var k in saved) st[k] = saved[k]; } catch (e) {}
+  function apply() {
+    var r = document.documentElement;
+    r.style.setProperty("--app-dim", (1 - st.b).toFixed(2));
+    r.style.setProperty("--app-warm", (st.n ? st.w / 100 * 0.45 : 0).toFixed(3));
+    try { localStorage.setItem(KEY, JSON.stringify(st)); } catch (e) {}
+    if (btn) btn.classList.toggle("on", st.b < 1 || st.n);
+  }
+  apply();
+  if (!btn) return;
+  var pop = document.createElement("div");
+  pop.className = "display-pop"; pop.hidden = true;
+  pop.setAttribute("role", "dialog"); pop.setAttribute("aria-label", "Display settings");
+  pop.innerHTML =
+    '<div class="dp-head">Display</div>' +
+    '<label class="dp-row"><span>Brightness</span><b class="dp-val" data-v="b"></b></label>' +
+    '<input type="range" class="dp-range" data-k="b" min="20" max="100" step="1" aria-label="App brightness">' +
+    '<div class="dp-row dp-switch-row"><span>Night light</span>' +
+    '<button type="button" class="dp-switch" role="switch" aria-label="Night light"><span></span></button></div>' +
+    '<label class="dp-row dp-warm"><span>Warmth</span><b class="dp-val" data-v="w"></b></label>' +
+    '<input type="range" class="dp-range dp-warm" data-k="w" min="0" max="100" step="1" aria-label="Night light warmth">' +
+    '<div class="dp-presets"><button type="button" data-p="normal">Normal</button>' +
+    '<button type="button" data-p="dim">Dim</button><button type="button" data-p="night">Night</button></div>' +
+    '<p class="dp-note">Dims the whole app. The video player\'s own ☀ adjusts just the video.</p>';
+  btn.parentElement.appendChild(pop);
+  var bR = pop.querySelector('[data-k="b"]'), wR = pop.querySelector('[data-k="w"]'), sw = pop.querySelector(".dp-switch");
+  function sync() {
+    bR.value = Math.round(st.b * 100); wR.value = st.w;
+    pop.querySelector('[data-v="b"]').textContent = Math.round(st.b * 100) + "%";
+    pop.querySelector('[data-v="w"]').textContent = st.w + "%";
+    sw.classList.toggle("on", st.n); sw.setAttribute("aria-checked", st.n ? "true" : "false");
+    pop.classList.toggle("night-off", !st.n);
+    bR.style.setProperty("--fill", ((st.b * 100 - 20) / 80 * 100) + "%");
+    wR.style.setProperty("--fill", st.w + "%");
+  }
+  bR.addEventListener("input", function () { st.b = bR.value / 100; apply(); sync(); });
+  wR.addEventListener("input", function () { st.w = +wR.value; st.n = true; apply(); sync(); });
+  sw.addEventListener("click", function () { st.n = !st.n; apply(); sync(); });
+  pop.querySelector(".dp-presets").addEventListener("click", function (e) {
+    var p = e.target.getAttribute("data-p"); if (!p) return;
+    if (p === "normal") { st.b = 1; st.n = false; }
+    else if (p === "dim") { st.b = 0.6; st.n = false; }
+    else { st.b = 0.45; st.n = true; st.w = 70; }
+    apply(); sync();
+  });
+  function setOpen(o) {
+    pop.hidden = !o; btn.setAttribute("aria-expanded", o ? "true" : "false");
+    if (o) { sync(); bR.focus(); }
+  }
+  btn.addEventListener("click", function (e) { e.stopPropagation(); setOpen(pop.hidden); });
+  document.addEventListener("click", function (e) { if (!pop.hidden && !pop.contains(e.target)) setOpen(false); });
+  document.addEventListener("keydown", function (e) { if (e.key === "Escape" && !pop.hidden) { setOpen(false); btn.focus(); } });
+})();
+
+// ===== Mini player mode: play videos without leaving the page =====
+(function () {
+  "use strict";
+  var toggle = document.getElementById("mini-toggle");
+  if (!toggle) return;
+  var MODE_KEY = "otube.miniMode", STATE_KEY = "otube.miniState", POS_KEY = "otube.miniPos";
+  function get(k, d) { try { return JSON.parse(localStorage.getItem(k)) || d; } catch (e) { return d; } }
+  function set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
+  function sget(k) { try { return JSON.parse(sessionStorage.getItem(k)); } catch (e) { return null; } }
+  function sset(k, v) { try { if (v == null) sessionStorage.removeItem(k); else sessionStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
+
+  var on = !!get(MODE_KEY, false);
+  function syncToggle() {
+    toggle.classList.toggle("on", on);
+    toggle.setAttribute("aria-pressed", on ? "true" : "false");
+  }
+  syncToggle();
+  toggle.addEventListener("click", function () {
+    on = !on; set(MODE_KEY, on); syncToggle();
+    flash(on ? "Mini player on: videos play here without leaving the page" : "Mini player off: videos open on their own page");
+  });
+
+  var ICON = function (d) { return '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="' + d + '"/></svg>'; };
+  var dock = document.createElement("div");
+  dock.className = "mini"; dock.hidden = true;
+  dock.setAttribute("role", "region"); dock.setAttribute("aria-label", "Mini player");
+  dock.innerHTML =
+    '<div class="mini__bar">' +
+    '  <span class="mini__title"></span>' +
+    '  <button type="button" class="mini__btn" data-m="size" title="Larger (Esc to shrink)">' + ICON("M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z") + '</button>' +
+    '  <button type="button" class="mini__btn" data-m="page" title="Open full page">' + ICON("M19 19H5V5h7V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z") + '</button>' +
+    '  <button type="button" class="mini__btn" data-m="close" title="Close">' + ICON("M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z") + '</button>' +
+    '</div>' +
+    '<iframe class="mini__frame" title="Mini player" allow="autoplay; fullscreen; picture-in-picture" allowfullscreen></iframe>';
+  var scrim = document.createElement("div");
+  scrim.className = "mini-scrim"; scrim.hidden = true;
+  document.body.appendChild(scrim); document.body.appendChild(dock);
+  var frame = dock.querySelector("iframe"), titleEl = dock.querySelector(".mini__title");
+  var state = null;  // {path, vid, t, title, large}
+
+  function flash(msg) {
+    var t = document.getElementById("note-toast");
+    if (!t) { t = document.createElement("div"); t.id = "note-toast"; t.className = "note-toast"; document.body.appendChild(t); }
+    t.textContent = msg; t.classList.add("show");
+    clearTimeout(flash._t); flash._t = setTimeout(function () { t.classList.remove("show"); }, 2500);
+  }
+  function setLarge(l) {
+    dock.classList.toggle("mini--large", l); scrim.hidden = !l;
+    if (state) { state.large = l; sset(STATE_KEY, state); }
+  }
+  function open(path, t, large) {
+    var u = new URL(path, location.origin);
+    u.searchParams.set("embed", "1");
+    if (t > 1) u.searchParams.set("t", Math.floor(t)); else u.searchParams.delete("t");
+    state = { path: u.pathname + u.search.replace(/[?&]t=\d+/, ""), vid: u.pathname.split("/").pop(), t: t || 0, title: "", large: !!large };
+    frame.src = u.pathname + u.search;
+    dock.hidden = false;
+    setLarge(!!large);
+    sset(STATE_KEY, state);
+  }
+  function close() {
+    frame.src = "about:blank"; dock.hidden = true; setLarge(false); state = null; sset(STATE_KEY, null);
+  }
+  window.addEventListener("message", function (e) {
+    if (e.origin !== location.origin || !e.data || e.data.type !== "otube-mini" || !state) return;
+    var d = e.data;
+    if (d.vid !== state.vid) {  // autoplay moved to the next video inside the frame
+      state.vid = d.vid;
+      try { var fu = new URL(frame.contentWindow.location.href); fu.searchParams.delete("t"); state.path = fu.pathname + fu.search; } catch (err) {}
+    }
+    state.t = d.t; state.title = d.title;
+    titleEl.textContent = d.title; titleEl.title = d.title;
+    sset(STATE_KEY, state);
+  });
+  dock.querySelector(".mini__bar").addEventListener("click", function (e) {
+    var b = e.target.closest("[data-m]"); if (!b) return;
+    var m = b.getAttribute("data-m");
+    if (m === "close") close();
+    else if (m === "size") setLarge(!dock.classList.contains("mini--large"));
+    else if (m === "page" && state) location.href = "/watch/" + state.vid + (state.t > 1 ? "?t=" + Math.floor(state.t) : "");
+  });
+  scrim.addEventListener("click", function () { setLarge(false); });
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape" && dock.classList.contains("mini--large")) setLarge(false);
+  });
+
+  // drag the small player by its bar; position remembered
+  var pos = get(POS_KEY, null);
+  function place() {
+    if (!pos || dock.classList.contains("mini--large")) { dock.style.left = dock.style.top = ""; return; }
+    var w = dock.offsetWidth || 400, h = dock.offsetHeight || 260;
+    dock.style.left = Math.min(Math.max(8, pos.x), innerWidth - w - 8) + "px";
+    dock.style.top = Math.min(Math.max(64, pos.y), innerHeight - h - 8) + "px";
+    dock.style.right = dock.style.bottom = "auto";
+  }
+  var bar = dock.querySelector(".mini__bar"), drag = null;
+  bar.addEventListener("pointerdown", function (e) {
+    if (e.target.closest("button") || dock.classList.contains("mini--large")) return;
+    var r = dock.getBoundingClientRect();
+    drag = { dx: e.clientX - r.left, dy: e.clientY - r.top };
+    bar.setPointerCapture(e.pointerId); dock.classList.add("dragging");
+  });
+  bar.addEventListener("pointermove", function (e) {
+    if (!drag) return;
+    pos = { x: e.clientX - drag.dx, y: e.clientY - drag.dy }; place();
+  });
+  bar.addEventListener("pointerup", function () { if (drag) { drag = null; dock.classList.remove("dragging"); set(POS_KEY, pos); } });
+  window.addEventListener("resize", place);
+  new MutationObserver(place).observe(dock, { attributes: true, attributeFilter: ["class", "hidden"] });
+
+  // intercept video links while the mode is on (plain left-clicks only)
+  document.addEventListener("click", function (e) {
+    if (!on || e.defaultPrevented || e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+    var a = e.target.closest('a[href^="/watch/"]');
+    if (!a || a.closest(".mini") || a.closest(".grid.selecting")) return;
+    e.preventDefault();
+    open(a.getAttribute("href"), 0, dock.classList.contains("mini--large"));
+  });
+
+  // keep playing across page changes in this tab (folder chips, sort, search...)
+  var prev = sget(STATE_KEY);
+  if (prev && prev.path) open(prev.path, prev.t, prev.large);
 })();
