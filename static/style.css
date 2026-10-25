@@ -1063,3 +1063,8 @@ body.embed { margin: 0; background: #000; overflow: hidden; }
 .mini__bar, .mini.dragging .mini__bar { cursor: default; }
 .embed .p video, .embed .p.p-dragging, .embed .p.p-dragging video { cursor: default; }
 .embed .p:not(.show-ui):not(.paused) video { cursor: none; }   /* still hide it while watching */
+
+/* Progress bar: generous hit area like YouTube's (the line looks the same,
+   but you can grab it from ~16px above or below) */
+.p-scrub { height: 32px; margin: -8px 6px -2px; }
+.p-scrub__tip { bottom: 30px; }
