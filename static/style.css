@@ -1068,3 +1068,9 @@ body.embed { margin: 0; background: #000; overflow: hidden; }
    but you can grab it from ~16px above or below) */
 .p-scrub { height: 32px; margin: -8px 6px -2px; }
 .p-scrub__tip { bottom: 30px; }
+
+/* Firefox: lazy-loaded thumbnails inside content-visibility:auto cards are
+   loaded but never painted, so skip that optimisation there. */
+@supports (-moz-appearance: none) {
+  .grid .card, .yt-rail .up-item { content-visibility: visible; contain-intrinsic-size: none; }
+}
