@@ -39,9 +39,9 @@
     <main class="content">
       <div class="chips-sticky">
       <div class="chips" id="chips">
-        <a class="chip {{ 'active' if not current_folder and not playlist }}" href="/{{ '?sort=' ~ sort if sort and sort!='name' else '' }}">All</a>
+        <a class="chip {{ 'active' if not current_folder and not playlist }}" href="/{{ '?sort=' ~ sort if sort and sort!='name' else '' }}">All <span class="chip__n">{{ total_count }}</span></a>
         {% for f in folders %}
-        <a class="chip {{ 'active' if current_folder == f }}{{ ' private' if f in private_set }}" href="?folder={{ f|urlencode }}{{ '&sort=' ~ sort if sort and sort!='name' else '' }}">{{ f.rstrip('/').split('/')[-1] or f }}</a>
+        <a class="chip {{ 'active' if current_folder == f }}{{ ' private' if f in private_set }}" href="?folder={{ f|urlencode }}{{ '&sort=' ~ sort if sort and sort!='name' else '' }}">{{ f.rstrip('/').split('/')[-1] or f }} <span class="chip__n">{{ folder_trees[f].count if f in folder_trees else 0 }}</span></a>
         {% endfor %}
       </div>
       {% set srt = '&sort=' ~ sort if sort and sort != 'name' else '' %}

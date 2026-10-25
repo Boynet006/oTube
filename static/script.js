@@ -922,13 +922,26 @@
   if (chips && rail) chips.addEventListener("click", function (e) {
     var c = e.target.closest(".chip"); if (!c) return;
     chips.querySelectorAll(".chip").forEach(function (x) { x.classList.toggle("active", x === c); });
-    var f = c.getAttribute("data-f");
     rail.querySelectorAll(".up-item").forEach(function (a) {
-      var show = f === "all" ||
-        (f === "folder" && a.getAttribute("data-same") === "1") ||
-        (f === "new" && a.getAttribute("data-new") === "1") ||
-        (f === "unwatched" && !a.classList.contains("partial"));
-      a.style.display = show ? "" : "none";
+      a.style.display = railMatch(c, a) ? "" : "none";
     });
+  });
+  function railMatch(c, a) {
+    var f = c.getAttribute("data-f"), sub = c.getAttribute("data-sub") || "";
+    var s = a.getAttribute("data-sub") || "";
+    return f === "all" ||
+      (f === "folder" && a.getAttribute("data-same") === "1") ||
+      (f === "sub" && a.getAttribute("data-same") === "1" && (s === sub || s.indexOf(sub + "/") === 0)) ||
+      (f === "new" && a.getAttribute("data-new") === "1") ||
+      (f === "unwatched" && !a.classList.contains("partial"));
+  }
+  // count on every chip = how many rail videos it would show; hide empty filters
+  if (chips && rail) chips.querySelectorAll(".chip").forEach(function (c) {
+    var n = 0;
+    rail.querySelectorAll(".up-item").forEach(function (a) { if (railMatch(c, a)) n++; });
+    var span = document.createElement("span");
+    span.className = "chip__n"; span.textContent = n;
+    c.appendChild(document.createTextNode(" ")); c.appendChild(span);
+    if (!n && c.getAttribute("data-f") !== "all") c.hidden = true;
   });
 })();

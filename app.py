@@ -322,6 +322,15 @@ def folder_trees(items: list[dict], folders: list[str]) -> dict:
     return {f: finish(t) for f, t in trees.items()}
 
 
+def unique(items: list[dict]) -> list[dict]:
+    seen, out = set(), []
+    for v in items:
+        if v["id"] not in seen:
+            seen.add(v["id"])
+            out.append(v)
+    return out
+
+
 def sub_level(trees: dict, folder: str, sub: str) -> dict | None:
     """For the chip row: the node being viewed and its direct subfolders."""
     node = trees.get(folder) if folder else None
@@ -360,6 +369,8 @@ def index():
     else:
         if folder:
             videos = [v for v in videos if v["folder"] == folder]
+        else:
+            videos = unique(videos)  # overlapping folders (a folder + its subfolder) list a file twice
         if folder and sub:
             videos = [v for v in videos if v["subdir"] == sub or v["subdir"].startswith(sub + "/")]
         keys = {
@@ -382,6 +393,7 @@ def index():
     return render_template("index.html", videos=videos, folders=folders,
                            current_folder=folder, current_sub=sub, sort=sort,
                            folder_trees=(trees := folder_trees(scan(), folders)),
+                           total_count=len({v["id"] for v in scan() if v["folder"] in trees}),
                            sub_level=sub_level(trees, folder, sub),
                            playlists=pls, playlist=playlist,
                            private_on=unlocked, private_set=hidden, has_pin=bool(cfg.get("pin_hash")))
@@ -392,7 +404,7 @@ def watch(vid):
     r = get_rec(vid)
     if not allowed(r):
         abort(404)
-    everything = visible(enrich(scan()))
+    everything = unique(visible(enrich(scan())))
     playlist = find_playlist(load_playlists(), request.args.get("list", ""))
     if playlist and vid in playlist["items"]:
         # Playing a playlist: the rail shows the whole list, "next" is the following item.

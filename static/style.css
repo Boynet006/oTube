@@ -896,3 +896,12 @@ a.shuffle-btn { text-decoration: none; }
 .chip.active .chip__n { color: #555; }
 .chip--up { padding: 6px 10px; }
 .chip--up svg { color: var(--text) !important; }
+
+/* ---- counts on folder chips / rail chips ---- */
+.chip .chip__n { margin-left: 2px; }
+.yt-chips .chip { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.yt-chips .chip svg { color: var(--text-dim); flex-shrink: 0; }
+.yt-chips .chip.active svg { color: inherit; }
+.yt-chips .chip--sf.mine:not(.active) { box-shadow: inset 0 0 0 1px #555; }  /* subfolder this video is in */
+.folder .nav-count { padding-right: 4px; }
+.folder:hover .nav-count { display: none; }  /* make room for the hover buttons */

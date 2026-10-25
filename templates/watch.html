@@ -101,6 +101,10 @@
       <div class="yt-chips" id="rail-chips" role="tablist">
         <button type="button" class="chip active" data-f="all">All</button>
         <button type="button" class="chip" data-f="folder">From {{ video.folder_name }}</button>
+        {% set vtree = (folder_trees or {}).get(video.folder) %}
+        {% if vtree %}{% for c in vtree.children %}
+        <button type="button" class="chip chip--sf {{ 'mine' if video.subdir == c.rel or video.subdir.startswith(c.rel ~ '/') }}" data-f="sub" data-sub="{{ c.rel }}" title="{{ video.folder_name }} › {{ c.rel }}"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M10 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8z"/></svg>{{ c.name }}</button>
+        {% endfor %}{% endif %}
         <button type="button" class="chip" data-f="unwatched">Unwatched</button>
         <button type="button" class="chip" data-f="new">Recently added</button>
       </div>
@@ -109,6 +113,7 @@
       {% for v in upnext %}
       <a class="up-item {{ 'current' if v.id == video.id }}" data-id="{{ v.id }}"
          data-same="{{ '1' if v.folder == video.folder else '0' }}" data-new="{{ '1' if v.is_new else '0' }}"
+         data-sub="{{ v.subdir if v.folder == video.folder else '' }}"
          href="/watch/{{ v.id }}{{ '?list=' ~ playlist.id if playlist else '' }}">
         <div class="up-thumb">
           <img loading="lazy" src="/thumb/{{ v.id }}" alt="">
