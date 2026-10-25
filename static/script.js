@@ -623,8 +623,8 @@
       fItem("reveal", "Show in Explorer") + fItem("copy", "Copy path");
     if (!isSub) {
       var priv = row.getAttribute("data-private") === "1";
-      if (PRIVATE_ON) h += '<div class="ctx-sep"></div>' +
-        fItem(priv ? "public" : "private", priv ? "Make public (show in Family mode)" : "Make private (hide in Family mode)");
+      h += '<div class="ctx-sep"></div>' +
+        fItem(priv ? "public" : "private", priv ? "Move to Family mode (make public)" : "Move to Private mode…");
       h += '<div class="ctx-sep"></div>' +
         (row.hasAttribute("data-nomove") || row.getAttribute("data-first") === "1" ? "" : fItem("up", "Move up")) +
         (row.hasAttribute("data-nomove") || row.getAttribute("data-last") === "1" ? "" : fItem("down", "Move down")) +
@@ -688,9 +688,23 @@
           if (navigator.clipboard) navigator.clipboard.writeText(c.host);
           note("Helper not running (start oTube from its desktop icon). Path copied to clipboard.");
         });
-    } else if (act === "private" || act === "public") {
-      postForm("/folder_private", { folder_path: c.folder, private: act === "private" ? "1" : "0" })
-        .then(function () { location.reload(); });
+    } else if (act === "public") {
+      postForm("/folder_private", { folder_path: c.folder, private: "0" }).then(function () { location.reload(); });
+    } else if (act === "private") {
+      var leaving = !PRIVATE_ON;
+      (leaving ? confirmDialog({
+        title: 'Move "' + c.name + '" to Private mode?',
+        text: "It will disappear from Family mode and only show in Private mode" +
+              (document.querySelector('#mode-btn[data-pin="1"]') ? " (PIN needed)." : ".") +
+              " You can move it back from Private mode.",
+        confirm: "Move to Private", icon: '<svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true"><path fill="currentColor" d="M12 2a5 5 0 0 0-5 5v3H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2h-1V7a5 5 0 0 0-5-5zm-3 8V7a3 3 0 0 1 6 0v3H9z"/></svg>'
+      }) : Promise.resolve(true)).then(function (ok) {
+        if (!ok) return;
+        postForm("/folder_private", { folder_path: c.folder, private: "1" }).then(function () {
+          var u = new URL(location.href);
+          if (leaving && u.searchParams.get("folder") === c.folder) location.href = "/"; else location.reload();
+        });
+      });
     } else if (act === "up" || act === "down") {
       postForm("/folder_move", { folder_path: c.folder, dir: act }).then(function () { location.reload(); });
     } else if (act === "remove") {

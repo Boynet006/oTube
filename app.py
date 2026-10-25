@@ -144,15 +144,20 @@ def private_folders(cfg: dict | None = None) -> set:
     return set((cfg or load_config()).get("private_folders", []))
 
 
+# The two modes are separate libraries: Family shows only public folders,
+# Private shows only private ones.
+def folder_shown(folder: str, priv: set | None = None) -> bool:
+    priv = private_folders() if priv is None else priv
+    return (folder in priv) == private_unlocked()
+
+
 def visible(items: list[dict]) -> list[dict]:
-    if private_unlocked():
-        return items
-    hidden = private_folders()
-    return [v for v in items if v["folder"] not in hidden]
+    priv = private_folders()
+    return [v for v in items if folder_shown(v["folder"], priv)]
 
 
 def allowed(r: dict | None) -> bool:
-    return bool(r) and (private_unlocked() or r["folder"] not in private_folders())
+    return bool(r) and folder_shown(r["folder"])
 
 
 def load_playlists() -> list[dict]:
@@ -483,7 +488,7 @@ def index():
             videos.sort(key=keyfn, reverse=rev)
     hidden = private_folders(cfg)
     unlocked = private_unlocked()
-    folders = [f for f in cfg.get("video_folders", []) if unlocked or f not in hidden]
+    folders = [f for f in cfg.get("video_folders", []) if folder_shown(f, hidden)]
     return render_template("index.html", videos=videos, folders=folders,
                            current_folder=folder, current_sub=sub, sort=sort,
                            folder_trees=(trees := folder_trees(all_items, folders)),
@@ -536,7 +541,7 @@ def watch(vid):
                            private_on=private_unlocked(), has_pin=bool(cfg.get("pin_hash")),
                            # sidebar drawer
                            folders=[f for f in cfg.get("video_folders", [])
-                                    if private_unlocked() or f not in private_folders(cfg)],
+                                    if folder_shown(f, private_folders(cfg))],
                            playlists=load_playlists(), private_set=private_folders(cfg),
                            current_folder="", current_sub="", sort="name",
                            folder_trees=folder_trees(scan(), cfg.get("video_folders", [])))
@@ -1126,10 +1131,13 @@ def folder_move():
     folder, d = request.form.get("folder_path", ""), request.form.get("dir", "")
     cfg = load_config()
     fl = cfg["video_folders"]
-    if folder in fl:
-        i = fl.index(folder)
-        j = i - 1 if d == "up" else i + 1
-        if 0 <= j < len(fl):
+    priv = set(cfg.get("private_folders", []))
+    shown = [f for f in fl if folder_shown(f, priv)]  # swap with the neighbour you can see
+    if folder in shown:
+        k = shown.index(folder)
+        k2 = k - 1 if d == "up" else k + 1
+        if 0 <= k2 < len(shown):
+            i, j = fl.index(folder), fl.index(shown[k2])
             fl[i], fl[j] = fl[j], fl[i]
             save_config(cfg)
     return {"ok": True}
@@ -1166,8 +1174,10 @@ def set_mode():
 
 @app.route("/folder_private", methods=["POST"])
 def folder_private():
-    """Mark a folder private (hidden in Family mode) or public again."""
-    if not private_unlocked():
+    """Mark a folder private (moves it to Private mode) or public again.
+    Hiding is allowed from Family mode; making public needs Private mode."""
+    make_private = request.form.get("private") == "1"
+    if not make_private and not private_unlocked():
         return {"ok": False, "error": "Switch to Private mode first"}, 403
     folder = request.form.get("folder_path", "")
     cfg = load_config()
@@ -1205,6 +1215,8 @@ def add_folder():
         cfg = load_config()
         if path not in cfg["video_folders"]:
             cfg["video_folders"].append(path)
+            if private_unlocked():  # added in Private mode -> belongs to Private mode
+                cfg.setdefault("private_folders", []).append(path)
             save_config(cfg)
             rescan_now()
     return redirect(url_for("index"))
