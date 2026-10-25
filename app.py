@@ -271,7 +271,9 @@ def scan() -> list[dict]:
                     mtime = os.path.getmtime(full)
                 except OSError:
                     continue
+                sub = os.path.relpath(root, local).replace("\\", "/")
                 rec = {"id": vid, "path": full, "host_path": to_host(full), "title": fn, "folder": folder,
+                       "subdir": "" if sub == "." else sub,
                        "ext": ext, "size": size, "mtime": mtime,
                        "native": ext in NATIVE_EXTS}
                 cache[vid] = rec
@@ -299,6 +301,27 @@ def enrich(items: list[dict]) -> list[dict]:
     return out
 
 
+def folder_trees(items: list[dict], folders: list[str]) -> dict:
+    """{folder: {"count": n, "children": [node...]}} where a node is
+    {"name", "rel", "count", "children"} -- only subfolders that hold videos."""
+    trees = {f: {"count": 0, "children": {}} for f in folders}
+    for r in items:
+        t = trees.get(r["folder"])
+        if t is None:
+            continue
+        t["count"] += 1
+        node, rel = t, ""
+        for part in [p for p in r["subdir"].split("/") if p]:
+            rel = f"{rel}/{part}" if rel else part
+            node = node["children"].setdefault(part, {"name": part, "rel": rel, "count": 0, "children": {}})
+            node["count"] += 1
+
+    def finish(n):
+        n["children"] = sorted((finish(c) for c in n["children"].values()), key=lambda c: c["name"].lower())
+        return n
+    return {f: finish(t) for f, t in trees.items()}
+
+
 def get_rec(vid: str) -> dict | None:
     if vid in _rec_cache:
         return _rec_cache[vid]
@@ -312,6 +335,7 @@ def index():
     pls = load_playlists()
     videos = visible(enrich(scan()))
     folder = request.args.get("folder", "")
+    sub = request.args.get("sub", "").strip("/")
     sort = request.args.get("sort", "name")
     playlist = find_playlist(pls, request.args.get("playlist", ""))
     if playlist:
@@ -322,6 +346,8 @@ def index():
     else:
         if folder:
             videos = [v for v in videos if v["folder"] == folder]
+        if folder and sub:
+            videos = [v for v in videos if v["subdir"] == sub or v["subdir"].startswith(sub + "/")]
         keys = {
             "name": (lambda v: v["title"].lower(), False),
             "newest": (lambda v: v["mtime"], True),
@@ -340,7 +366,8 @@ def index():
     unlocked = private_unlocked()
     folders = [f for f in cfg.get("video_folders", []) if unlocked or f not in hidden]
     return render_template("index.html", videos=videos, folders=folders,
-                           current_folder=folder, sort=sort,
+                           current_folder=folder, current_sub=sub, sort=sort,
+                           folder_trees=folder_trees(scan(), folders),
                            playlists=pls, playlist=playlist,
                            private_on=unlocked, private_set=hidden, has_pin=bool(cfg.get("pin_hash")))
 
@@ -380,7 +407,8 @@ def watch(vid):
                            folders=[f for f in cfg.get("video_folders", [])
                                     if private_unlocked() or f not in private_folders(cfg)],
                            playlists=load_playlists(), private_set=private_folders(cfg),
-                           current_folder="", sort="name")
+                           current_folder="", current_sub="", sort="name",
+                           folder_trees=folder_trees(scan(), cfg.get("video_folders", [])))
 
 
 def _live_stream(r: dict) -> Response:

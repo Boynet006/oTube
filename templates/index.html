@@ -51,7 +51,7 @@
 
       <div class="content__bar">
         <div class="crumb">
-          {% if playlist %}<svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M3 6h12v2H3zm0 4h12v2H3zm0 4h8v2H3zm14-4v8.2a3 3 0 1 0 2 2.8V12h3v-2z"/></svg> {{ playlist.name }}{% elif current_folder %}{{ current_folder.rstrip('/').split('/')[-1] }}{% else %}All videos{% endif %}
+          {% if playlist %}<svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M3 6h12v2H3zm0 4h12v2H3zm0 4h8v2H3zm14-4v8.2a3 3 0 1 0 2 2.8V12h3v-2z"/></svg> {{ playlist.name }}{% elif current_folder %}<a class="crumb__part" href="/?folder={{ current_folder|urlencode }}">{{ current_folder.rstrip('/').split('/')[-1] }}</a>{% if current_sub %}{% set ns = namespace(acc='') %}{% for part in current_sub.split('/') %}{% set ns.acc = (ns.acc ~ '/' ~ part) if ns.acc else part %}<span class="crumb__sep">›</span><a class="crumb__part" href="/?folder={{ current_folder|urlencode }}&sub={{ ns.acc|urlencode }}">{{ part }}</a>{% endfor %}{% endif %}{% else %}All videos{% endif %}
           <span class="count">{{ videos|length }}</span>
         </div>
         <div class="bar-right">
@@ -85,7 +85,7 @@
           {% if not playlist %}
           <label class="sort">
             Sort
-            <select id="sort-select" data-folder="{{ current_folder }}">
+            <select id="sort-select" data-folder="{{ current_folder }}" data-sub="{{ current_sub }}">
               <option value="name" {{ 'selected' if sort=='name' }}>Name</option>
               <option value="newest" {{ 'selected' if sort=='newest' }}>Newest</option>
               <option value="size" {{ 'selected' if sort=='size' }}>Size</option>

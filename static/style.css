@@ -863,3 +863,24 @@ a.shuffle-btn { text-decoration: none; }
   .watch { padding: 0 0 24px; }
   .watch__side { flex-basis: auto; width: auto; min-width: 0; }
 }
+
+/* ---- Folder tree ---- */
+.tree { display: none; }
+.tree-node.open > .tree { display: block; }
+.nav-item.folder, .nav-item.sub { gap: 4px; padding-left: 4px; }
+.nav-item.folder > a, .nav-item.sub > a { gap: 12px; }
+.nav-item.sub { height: 34px; padding-left: calc(4px + var(--depth, 1) * 14px); }
+.nav-item.sub > a span { font-size: 13.5px; }
+.nav-item.sub .nav-count { padding-right: 6px; }
+.tree-tog {
+  flex: 0 0 24px; width: 24px; height: 24px; display: grid; place-items: center; padding: 0;
+  background: none; border: none; color: var(--text-dim); border-radius: 50%; cursor: pointer;
+}
+.tree-tog:hover { color: var(--text); background: #3a3a3a; }
+.tree-tog svg { transition: transform .15s; }
+.tree-node.open > .nav-item > .tree-tog svg { transform: rotate(90deg); }
+.tree-tog--none { cursor: default; }
+.tree-tog--none:hover { background: none; }
+.crumb__part { color: inherit; }
+.crumb__part:hover { text-decoration: underline; }
+.crumb__sep { color: var(--text-dim); margin: 0 6px; font-weight: 400; }

@@ -34,6 +34,34 @@
     menuBtn.addEventListener("click", function () { sidebar.classList.toggle("hidden"); });
   }
 
+  // --- Folder tree in the sidebar: expand/collapse, remembered per folder ---
+  var TREE_KEY = "otube.tree";
+  var openSet = {};
+  try { openSet = JSON.parse(localStorage.getItem(TREE_KEY) || "{}"); } catch (e) {}
+  function setNode(node, open) {
+    node.classList.toggle("open", open);
+    var t = node.querySelector(":scope > .nav-item > .tree-tog");
+    if (t && t.tagName === "BUTTON") t.setAttribute("aria-expanded", open ? "true" : "false");
+  }
+  document.querySelectorAll(".tree-node").forEach(function (n) {
+    if (openSet[n.getAttribute("data-key")]) setNode(n, true);
+  });
+  // open the path down to the selected folder
+  var act = document.querySelector(".sidebar .nav-item.sub.active");
+  if (act) {
+    for (var n = act.parentElement.parentElement.closest(".tree-node"); n; n = n.parentElement.closest(".tree-node")) setNode(n, true);
+  }
+  document.addEventListener("click", function (e) {
+    var t = e.target.closest(".tree-tog");
+    if (!t || t.tagName !== "BUTTON") return;
+    e.preventDefault(); e.stopPropagation();
+    var node = t.closest(".tree-node"), open = !node.classList.contains("open");
+    setNode(node, open);
+    var k = node.getAttribute("data-key");
+    if (open) openSet[k] = 1; else delete openSet[k];
+    try { localStorage.setItem(TREE_KEY, JSON.stringify(openSet)); } catch (err) {}
+  });
+
   // --- Live search (home) ---
   var search = document.getElementById("search");
   var grid = document.getElementById("grid");
@@ -64,6 +92,8 @@
       var folder = sortSel.getAttribute("data-folder") || "";
       var url = "/?sort=" + encodeURIComponent(sortSel.value);
       if (folder) url += "&folder=" + encodeURIComponent(folder);
+      var sub = sortSel.getAttribute("data-sub") || "";
+      if (sub) url += "&sub=" + encodeURIComponent(sub);
       if (sortSel.value === "random") url += "&seed=" + Math.floor(Math.random() * 1e6);
       window.location.href = url;
     });

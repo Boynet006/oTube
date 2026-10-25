@@ -1,3 +1,22 @@
+{% macro subtree(f, nodes, depth) -%}
+  <div class="tree" role="group">
+  {% for n in nodes %}
+    {% set key = f ~ '|' ~ n.rel %}
+    <div class="tree-node" data-key="{{ key }}">
+      <div class="nav-item sub {{ 'active' if current_folder == f and current_sub == n.rel }}" style="--depth: {{ depth }}">
+        {% if n.children %}<button type="button" class="tree-tog" aria-label="Expand {{ n.name }}" aria-expanded="false"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M10 6 8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/></svg></button>
+        {% else %}<span class="tree-tog tree-tog--none"></span>{% endif %}
+        <a href="/?folder={{ f|urlencode }}&sub={{ n.rel|urlencode }}{{ '&sort=' ~ sort if sort else '' }}" title="{{ n.rel }}">
+          <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M10 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8z"/></svg>
+          <span>{{ n.name }}</span>
+        </a>
+        <span class="nav-count">{{ n.count }}</span>
+      </div>
+      {% if n.children %}{{ subtree(f, n.children, depth + 1) }}{% endif %}
+    </div>
+  {% endfor %}
+  </div>
+{%- endmacro %}
     <aside class="sidebar{{ ' drawer hidden' if drawer }}" id="sidebar" aria-label="Library">
       {% if drawer %}
       <div class="drawer__head">
@@ -18,7 +37,11 @@
       <div class="nav-label">Folders</div>
       {% for f in folders %}
       {% set is_priv = f in private_set %}
-      <div class="nav-item folder {{ 'active' if current_folder == f else '' }} {{ 'private' if is_priv }}">
+      {% set tree = (folder_trees or {}).get(f) %}
+      <div class="tree-node tree-root" data-key="{{ f }}|">
+      <div class="nav-item folder {{ 'active' if current_folder == f and not current_sub else '' }} {{ 'private' if is_priv }}">
+        {% if tree and tree.children %}<button type="button" class="tree-tog" aria-label="Expand folder" aria-expanded="false"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M10 6 8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/></svg></button>
+        {% else %}<span class="tree-tog tree-tog--none"></span>{% endif %}
         <a href="/?folder={{ f|urlencode }}{{ '&sort=' ~ sort if sort else '' }}" title="{{ f }}">
           <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M10 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8z"/></svg>
           <span>{{ f.rstrip('/').split('/')[-1] or f }}</span>
@@ -33,6 +56,8 @@
           <input type="hidden" name="folder_path" value="{{ f }}">
           <button type="submit" class="remove-btn" title="Remove folder" aria-label="Remove folder">✕</button>
         </form>
+      </div>
+      {% if tree and tree.children %}{{ subtree(f, tree.children, 1) }}{% endif %}
       </div>
       {% endfor %}
       {% if not drawer %}
