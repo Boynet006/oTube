@@ -724,12 +724,14 @@
     };
     wrap.addEventListener("pointerdown", function (e) {
       if (e.button !== 0 || e.target.closest("button, input, .p-scrub, .p-menu, .p-upnext")) return;
-      dg = { x: e.screenX, y: e.screenY, id: e.pointerId, on: false };
+      dg = { x: e.screenX, y: e.screenY, id: e.pointerId, on: false, t: Date.now() };
     });
     wrap.addEventListener("pointermove", function (e) {
       if (!dg) return;
       if (!dg.on) {
-        if (Math.abs(e.screenX - dg.x) + Math.abs(e.screenY - dg.y) < 6) return;
+        // forgiving like YouTube: small wobble during a click is still a click
+        var dist = Math.hypot(e.screenX - dg.x, e.screenY - dg.y);
+        if (dist < 12 || (Date.now() - dg.t < 200 && dist < 20)) return;
         dg.on = true;
         try { wrap.setPointerCapture(dg.id); } catch (err) {}
         wrap.classList.add("p-dragging");
