@@ -7,6 +7,7 @@ stream directly with HTTP range (seeking); mkv/avi are remuxed to fragmented mp4
 on the fly so they play in the browser too.
 """
 import glob
+import gzip
 import hashlib
 import json
 import os
@@ -22,6 +23,7 @@ from flask import (Flask, Response, abort, redirect, render_template, request,
 from werkzeug.security import check_password_hash, generate_password_hash
 
 app = Flask(__name__)
+app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 300  # static css/js
 
 BASE = os.environ.get("OTUBE_DATA") or os.path.dirname(os.path.abspath(__file__))
 os.makedirs(BASE, exist_ok=True)
@@ -106,13 +108,21 @@ def to_host(path: str) -> str:
     return path
 
 
+_cfg_cache: list = [None, None]  # [mtime, cfg]
+
+
 def load_config() -> dict:
+    """Parsed config.json, re-read only when the file changes. Returns a copy
+    so callers can modify it before save_config()."""
     try:
-        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-            cfg = json.load(f)
-        if not isinstance(cfg.get("video_folders"), list):
-            cfg = {"video_folders": []}
-        return cfg
+        mtime = os.path.getmtime(CONFIG_PATH)
+        if _cfg_cache[0] != mtime:
+            with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+            if not isinstance(cfg.get("video_folders"), list):
+                cfg = {"video_folders": []}
+            _cfg_cache[:] = [mtime, cfg]
+        return json.loads(json.dumps(_cfg_cache[1]))
     except Exception:
         return {"video_folders": []}
 
@@ -229,15 +239,22 @@ def probe_codecs(path: str) -> tuple[str, str]:
     return (v, a)
 
 
-def probe_duration(path: str) -> float:
+def cached_duration(path: str, mtime: float) -> float | None:
+    """Duration from the cache if the file is unchanged, else None (no I/O)."""
+    c = _dur_cache.get(path)
+    return c[0] if c and abs(c[1] - mtime) < 1 else None
+
+
+def probe_duration(path: str, mtime: float | None = None) -> float:
     global _dur_dirty
-    try:
-        mtime = os.path.getmtime(path)
-    except OSError:
-        mtime = 0.0
-    cached = _dur_cache.get(path)
-    if cached and abs(cached[1] - mtime) < 1:  # unchanged file -> trust cache
-        return cached[0]
+    if mtime is None:
+        try:
+            mtime = os.path.getmtime(path)
+        except OSError:
+            mtime = 0.0
+    cached = cached_duration(path, mtime)
+    if cached is not None:  # unchanged file -> trust cache
+        return cached
     try:
         out = subprocess.run(
             [FFPROBE, "-v", "error", "-show_entries", "format=duration",
@@ -251,8 +268,53 @@ def probe_duration(path: str) -> float:
     return val
 
 
+# Walking the folders is the slow part (thousands of files over Docker's
+# Windows file sharing), so it never happens on a page load: the result is kept
+# in memory, refreshed in the background every SCAN_TTL seconds, and right away
+# after anything that changes the library (add/remove folder, rename, delete).
+SCAN_TTL = 60
+_scan_state = {"items": None, "at": 0.0, "running": False}
+_scan_lock = threading.Lock()
+
+
 def scan() -> list[dict]:
-    """Scan configured folders for videos; refresh the id->record cache."""
+    """All video records, from memory. Only the very first call waits for a scan."""
+    if _scan_state["items"] is None:
+        with _scan_lock:
+            if _scan_state["items"] is None:
+                _do_scan()
+    elif time.time() - _scan_state["at"] > SCAN_TTL:
+        rescan_async()
+    return _scan_state["items"]
+
+
+def rescan_async() -> None:
+    if _scan_state["running"]:
+        return
+    _scan_state["running"] = True
+
+    def run():
+        try:
+            with _scan_lock:
+                _do_scan()
+        finally:
+            _scan_state["running"] = False
+    threading.Thread(target=run, daemon=True).start()
+
+
+def rescan_now() -> None:
+    with _scan_lock:
+        _do_scan()
+
+
+def _do_scan() -> None:
+    items = _scan_disk()
+    _scan_state["items"], _scan_state["at"] = items, time.time()
+    _wake_warmer()
+
+
+def _scan_disk() -> list[dict]:
+    """Walk the configured folders for videos; refresh the id->record cache."""
     cfg = load_config()
     items, cache = [], {}
     for folder in cfg.get("video_folders", []):
@@ -267,8 +329,8 @@ def scan() -> list[dict]:
                 full = os.path.join(root, fn)
                 vid = vid_id(full)
                 try:
-                    size = os.path.getsize(full)
-                    mtime = os.path.getmtime(full)
+                    st = os.stat(full)  # one stat call per file
+                    size, mtime = st.st_size, st.st_mtime
                 except OSError:
                     continue
                 sub = os.path.relpath(root, local).replace("\\", "/")
@@ -283,10 +345,46 @@ def scan() -> list[dict]:
     return items
 
 
+# ---- Background warmer: fills in durations + thumbnails so pages never wait ----
+_warm_event = threading.Event()
+_warmer = None
+
+
+def _wake_warmer() -> None:
+    global _warmer
+    _warm_event.set()
+    if _warmer is None or not _warmer.is_alive():
+        _warmer = threading.Thread(target=_warm_loop, daemon=True)
+        _warmer.start()
+
+
+def _warm_loop() -> None:
+    global _dur_dirty
+    while True:
+        _warm_event.wait()
+        _warm_event.clear()
+        items = list(_scan_state["items"] or [])
+        # durations first (they show on every card), then thumbnails
+        n = 0
+        for r in items:
+            if cached_duration(r["path"], r["mtime"]) is None:
+                probe_duration(r["path"], r["mtime"])
+                n += 1
+                if n % 25 == 0:
+                    _save_dur_cache(); _dur_dirty = False
+        if _dur_dirty:
+            _save_dur_cache(); _dur_dirty = False
+        for r in items:
+            if _warm_event.is_set():
+                break  # library changed: start over with the new list
+            if not os.path.exists(os.path.join(THUMB_DIR, r["id"] + ".jpg")):
+                make_thumb(r)
+
+
 def enrich(items: list[dict]) -> list[dict]:
     out = []
     for r in items:
-        d = probe_duration(r["path"])
+        d = cached_duration(r["path"], r["mtime"]) or 0.0
         fname = folder_name(r["folder"])
         out.append({**r, "duration": fmt_duration(d), "dur_secs": int(d),
                     "size_h": fmt_size(r["size"]), "folder_name": fname,
@@ -294,10 +392,6 @@ def enrich(items: list[dict]) -> list[dict]:
                     "avatar_letter": (fname[:1] or "V").upper(),
                     "avatar_hue": avatar_hue(fname),
                     "is_new": time.time() - r["mtime"] < 7 * 86400})
-    global _dur_dirty
-    if _dur_dirty:
-        _save_dur_cache()
-        _dur_dirty = False
     return out
 
 
@@ -346,9 +440,8 @@ def sub_level(trees: dict, folder: str, sub: str) -> dict | None:
 
 
 def get_rec(vid: str) -> dict | None:
-    if vid in _rec_cache:
-        return _rec_cache[vid]
-    scan()
+    if not _rec_cache:
+        scan()
     return _rec_cache.get(vid)
 
 
@@ -356,7 +449,8 @@ def get_rec(vid: str) -> dict | None:
 def index():
     cfg = load_config()
     pls = load_playlists()
-    videos = visible(enrich(scan()))
+    all_items = scan()
+    videos = visible(enrich(all_items))
     folder = request.args.get("folder", "")
     sub = request.args.get("sub", "").strip("/")
     sort = request.args.get("sort", "name")
@@ -392,8 +486,8 @@ def index():
     folders = [f for f in cfg.get("video_folders", []) if unlocked or f not in hidden]
     return render_template("index.html", videos=videos, folders=folders,
                            current_folder=folder, current_sub=sub, sort=sort,
-                           folder_trees=(trees := folder_trees(scan(), folders)),
-                           total_count=len({v["id"] for v in scan() if v["folder"] in trees}),
+                           folder_trees=(trees := folder_trees(all_items, folders)),
+                           total_count=len({v["id"] for v in all_items if v["folder"] in trees}),
                            sub_level=sub_level(trees, folder, sub),
                            playlists=pls, playlist=playlist,
                            private_on=unlocked, private_set=hidden, has_pin=bool(cfg.get("pin_hash")))
@@ -423,6 +517,7 @@ def watch(vid):
         other = [v for v in everything if v["folder"] != r["folder"]]
         upnext = same + other
         next_vid = upnext[0]["id"] if upnext else None
+    probe_duration(r["path"], r["mtime"])  # just this one file, if not cached yet
     cur = next((v for v in enrich([r])), None)
     next_item = next((v for v in upnext if v["id"] == next_vid), None)
     liked = find_playlist(load_playlists(), LIKED_ID)
@@ -842,11 +937,34 @@ def subs_status(vid):
     return _job_status(vid, os.path.exists(os.path.join(AUTO_SUBS_DIR, vid + ".vtt")))
 
 
+def make_thumb(r: dict) -> str | None:
+    """Create (once) and return the thumbnail path for a video record."""
+    tp = os.path.join(THUMB_DIR, r["id"] + ".jpg")
+    if os.path.exists(tp) and os.path.getsize(tp) > 0:
+        return tp
+    for ss in ("00:00:05", "00:00:01"):
+        try:
+            subprocess.run(
+                [FFMPEG, "-ss", ss, "-i", r["path"], "-frames:v", "1",
+                 "-vf", "scale=480:-1", "-y", tp],
+                capture_output=True, timeout=45)
+            if os.path.exists(tp) and os.path.getsize(tp) > 0:
+                return tp
+        except Exception:
+            pass
+    return None
+
+
 @app.route("/thumb/<vid>")
 def thumb(vid):
     r = get_rec(vid)
     if not allowed(r):
         abort(404)
+    tp = make_thumb(r)
+    if tp:
+        # thumbnails never change for a given id -> let the browser keep them
+        return send_file(tp, mimetype="image/jpeg", max_age=7 * 86400)
+    abort(404)
     tp = os.path.join(THUMB_DIR, vid + ".jpg")
     if not os.path.exists(tp):
         for ss in ("00:00:05", "00:00:01"):
@@ -938,6 +1056,23 @@ def _browse_host(path: str):
 PIN_RE = re.compile(r"^\d{4,8}$")
 PIN_MAX_TRIES, PIN_LOCKOUT_SECS = 5, 30
 _pin_fails: dict[str, list] = {}  # client ip -> [failures, locked_until]
+
+
+@app.after_request
+def compress(resp):
+    """gzip text responses (the home page HTML is large with big libraries)."""
+    if (resp.direct_passthrough or resp.status_code != 200 or "gzip" not in request.headers.get("Accept-Encoding", "")
+            or resp.mimetype not in ("text/html", "application/json", "text/css", "application/javascript", "text/vtt")
+            or resp.headers.get("Content-Encoding")):
+        return resp
+    data = resp.get_data()
+    if len(data) < 1024:
+        return resp
+    resp.set_data(gzip.compress(data, compresslevel=5))
+    resp.headers["Content-Encoding"] = "gzip"
+    resp.headers["Content-Length"] = str(len(resp.get_data()))
+    resp.headers["Vary"] = "Accept-Encoding"
+    return resp
 
 
 @app.template_filter("host_path")
@@ -1066,6 +1201,7 @@ def add_folder():
         if path not in cfg["video_folders"]:
             cfg["video_folders"].append(path)
             save_config(cfg)
+            rescan_now()
     return redirect(url_for("index"))
 
 
@@ -1078,6 +1214,7 @@ def remove_folder():
         if path in cfg.get("private_folders", []):
             cfg["private_folders"].remove(path)
         save_config(cfg)
+        rescan_now()
     return redirect(url_for("index"))
 
 
@@ -1163,6 +1300,7 @@ def rename(vid):
     try:
         os.rename(r["path"], dest)
         _clear_caches(vid)
+        rescan_now()
     except OSError as exc:
         return {"ok": False, "error": str(exc)}, 500
     return {"ok": True}
@@ -1177,6 +1315,7 @@ def delete_video(vid):
     try:
         os.remove(r["path"])
         _clear_caches(vid)
+        rescan_now()
     except OSError as exc:
         return {"ok": False, "error": str(exc)}, 500
     return {"ok": True}
@@ -1309,4 +1448,6 @@ def api_playlist_action(pid, action):
 
 if __name__ == "__main__":
     _load_dur_cache()  # warm durations from last run -> instant first page load
-    app.run(host="0.0.0.0", port=8700, debug=False, threaded=True)
+    rescan_async()     # first scan starts now, before anyone opens a page
+    from waitress import serve
+    serve(app, host="0.0.0.0", port=8700, threads=16, channel_timeout=300)

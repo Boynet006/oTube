@@ -919,3 +919,8 @@ a.shuffle-btn { text-decoration: none; }
 @media (hover: none) { .row-more { display: grid; } .nav-item > .nav-count { display: none; } }
 .folder-menu { min-width: 240px; z-index: 130; }
 .folder-menu button:focus-visible { background: #45454a; outline: none; }
+
+/* ---- Performance: don't lay out / paint what's off screen ---- */
+.grid .card { content-visibility: auto; contain-intrinsic-size: auto 320px; }
+.grid.list .card { contain-intrinsic-size: auto 110px; }
+.yt-rail .up-item { content-visibility: auto; contain-intrinsic-size: auto 102px; }

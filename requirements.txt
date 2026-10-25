@@ -1,3 +1,4 @@
 flask>=3.0
+waitress>=3.0
 faster-whisper>=1.0
 sentencepiece>=0.2
