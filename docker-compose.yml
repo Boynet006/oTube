@@ -16,6 +16,8 @@ services:
       - "Q:/:/host/q"
     environment:
       - OTUBE_HOST_ROOT=/host
+      # Set by start-otube.ps1 to http://<this PC's network IP>:8700 (Settings → Devices)
+      - OTUBE_LAN_URL=${OTUBE_LAN_URL:-}
       # Where the other mounts live on the PC (for "Show in folder" / "Copy path")
       - OTUBE_PATH_MAP=/videos=Q:/Old Drive 2/Videos;/media/mrRobotSongs=C:/Users/al_ha/Desktop/mrRobotSongs
     restart: unless-stopped

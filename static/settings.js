@@ -182,6 +182,15 @@
     }).catch(function () { rescan.disabled = false; rescan.textContent = "↻ Rescan now"; });
   });
 
+  // ---- devices: copy address ----
+  var cp = document.getElementById("copy-lan");
+  if (cp) cp.addEventListener("click", function () {
+    var t = document.getElementById("lan-url").textContent;
+    (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(function () {
+      cp.textContent = "Copied ✓"; setTimeout(function () { cp.textContent = "Copy"; }, 1500);
+    }, function () { window.prompt("Copy this address:", t); });
+  });
+
   // ---- reset all ----
   document.getElementById("set-reset").addEventListener("click", function () {
     window.otubeConfirm({ title: "Reset all settings?", text: "Every setting goes back to its default.", confirm: "Reset all", danger: true })

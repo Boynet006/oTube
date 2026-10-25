@@ -5,6 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>oTube</title>
   <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <meta name="theme-color" content="#0f0f0f">
+  <link rel="apple-touch-icon" href="{{ url_for('static', filename='favicon.png') }}">
+  <meta name="apple-mobile-web-app-capable" content="yes">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
   <script>window.OTUBE = {{ app_settings|tojson }};</script>
   <script>/* apply the app-wide display setting before first paint (no bright flash) */

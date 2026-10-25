@@ -793,7 +793,7 @@ a.shuffle-btn { text-decoration: none; }
 }
 @media (max-width: 640px) {
   .yt-pill--hide-sm { display: none; }
-  .yt-pill span { display: none; }
+  .yt-pill .yt-lbl { display: none; }
   .yt-pill { padding: 0 10px; }
   .p-pill .p-btn { width: 38px; height: 38px; }
 }
@@ -1230,3 +1230,70 @@ body.embed { margin: 0; background: #000; overflow: hidden; }
   .settings-page .topbar__search { display: none; }
 }
 @media (prefers-reduced-motion: reduce) { .tgl::after, .opt-chip, .opt-card, .tp-card { transition: none; } }
+
+/* ===================== Phones & small screens ===================== */
+.search-back { display: none; }
+@media (max-width: 1000px) {
+  .layout > .sidebar.drawer { position: fixed; }       /* home sidebar acts as a drawer */
+}
+@media (max-width: 768px) {
+  .topbar { padding: 0 8px; gap: 6px; }
+  .topbar__right { gap: 4px; }
+  .content { padding: 8px 12px 60px; }
+  .content__bar { flex-wrap: wrap; gap: 10px; }
+  .bar-right { flex-wrap: wrap; gap: 8px; }
+  .chips { gap: 8px; padding: 8px 0 10px; }
+  .grid { gap: 18px 12px; }
+}
+@media (max-width: 640px) {
+  /* compact top bar: logo, search icon, a few icons */
+  .brand__text { display: none; }
+  .topbar__search { flex: 0 0 auto; margin: 0 0 0 auto; max-width: none; }
+  .topbar__search input { display: none; }
+  .topbar__search .search-btn { border-radius: 50%; width: 40px; border: none; background: none; }
+  .topbar.searching .topbar__left, .topbar.searching .topbar__right { display: none; }
+  .topbar.searching .topbar__search { flex: 1; margin: 0; }
+  .topbar.searching .topbar__search input { display: block; flex: 1; min-width: 0; }
+  .topbar.searching .search-back { display: grid; }
+  .topbar.searching .topbar__search .search-btn { border-radius: 0 20px 20px 0; width: 52px; background: var(--bg-3); border: 1px solid var(--border); border-left: none; }
+  .mode-btn { padding: 0 10px; }
+  .size-ctl { display: none; }
+  .sort { font-size: 0; }                        /* keep the select, drop the "Sort" word */
+  .sort select { font-size: 13px; }
+  .crumb { font-size: 15px; }
+  .card__body { padding-top: 10px; }
+  /* watch page */
+  .watch { padding: 0 0 24px; }
+  .yt-title { font-size: 17px; line-height: 24px; }
+  .yt-owner { gap: 10px; }
+  .yt-actions { width: 100%; overflow-x: auto; flex-wrap: nowrap; scrollbar-width: none; }
+  .yt-actions::-webkit-scrollbar { display: none; }
+  .yt-spacer { display: none; }
+  .p-bright, .p-btn[data-a="cc"] { display: none; }
+  .p-pill { padding: 0 2px; }
+  .p-left, .p-right { gap: 4px; }
+  /* settings: devices */
+  .devices { flex-direction: column; align-items: flex-start; }
+}
+
+/* Settings → Devices */
+.devices { display: flex; align-items: center; gap: 20px; padding: 10px 0 12px; }
+.qr { width: 168px; height: 168px; border-radius: 12px; background: #fff; padding: 6px; flex-shrink: 0; }
+.dev-text { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.dev-text b { font-size: 15px; }
+.dev-text span { font-size: 13px; color: var(--text-dim); line-height: 1.45; }
+.dev-url { display: flex; align-items: center; gap: 8px; margin: 4px 0; flex-wrap: wrap; }
+.dev-url code { font-size: 16px; font-weight: 700; background: var(--bg-3); padding: 6px 12px; border-radius: 8px; color: var(--text); user-select: all; }
+.dev-tip b { color: var(--text); font-size: 13px; }
+@media (max-width: 640px) {
+  .topbar__left { width: auto; min-width: 0; flex: 0 0 auto; gap: 4px; }
+  .topbar__right { width: auto; flex: 0 0 auto; }
+  .topbar__right .icon-btn { width: 36px; height: 36px; }
+  .topbar__right .mode-btn { height: 36px; }
+}
+
+/* one-column watch page: the rail must span the full width (it collapsed to 24px) */
+@media (max-width: 1016px) {
+  .watch__side { align-self: stretch; width: auto; }
+  .watch__main { align-self: stretch; }
+}

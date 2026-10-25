@@ -5,6 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{{ video.title }} — oTube</title>
   <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <meta name="theme-color" content="#0f0f0f">
+  <link rel="apple-touch-icon" href="{{ url_for('static', filename='favicon.png') }}">
+  <meta name="apple-mobile-web-app-capable" content="yes">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
   <script>window.OTUBE = {{ app_settings|tojson }};</script>
   <script>/* apply the app-wide display setting before first paint (no bright flash) */
@@ -78,11 +82,11 @@
           <button type="button" class="yt-pill yt-like {{ 'on' if liked }}" id="like-btn" data-id="{{ video.id }}"
                   aria-pressed="{{ 'true' if liked else 'false' }}" title="{{ 'Unlike' if liked else 'I like this' }}">
             <span class="yt-like__off"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M18.77 11h-4.23l1.52-4.94C16.38 5.03 15.54 4 14.38 4c-.58 0-1.14.24-1.52.65L7 11H3v10h4h1h9.43c1.06 0 1.98-.67 2.23-1.61l1.29-6C21.27 12.15 20.22 11 18.77 11zM7 20H4v-8h3v8zm12.98-6.83-1.29 6c-.08.35-.47.83-1.26.83H8v-8.61l5.6-6.06c.19-.21.48-.33.78-.33.26 0 .5.11.63.3.07.1.15.26.09.47l-1.52 4.94-.4 1.29h5.58c.41 0 .8.17 1.03.46.13.15.26.4.19.71z"/></svg></span><span class="yt-like__on"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M3 11h3v10H3V11zm15.77 0h-4.23l1.52-4.94C16.38 5.03 15.54 4 14.38 4c-.58 0-1.14.24-1.52.65L7 11v10h10.43c1.06 0 1.98-.67 2.23-1.61l1.29-6C21.27 12.15 20.22 11 18.77 11z"/></svg></span>
-            <span class="yt-like__label">{{ 'Liked' if liked else 'Like' }}</span>
+            <span class="yt-like__label yt-lbl">{{ 'Liked' if liked else 'Like' }}</span>
           </button>
-          <button type="button" class="yt-pill" id="share-btn" title="Copy link at current time"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M15 5.63 20.66 12 15 18.37V14h-1c-3.96 0-7.14 1-9.75 3.09 1.84-4.07 5.11-6.4 9.89-7.1l.86-.13V5.63M14 3v6C6.22 10.13 3.11 15.33 2 21c2.78-3.97 6.44-6 12-6v6l8-9-8-9z"/></svg><span>Share</span></button>
-          <button type="button" class="yt-pill" id="save-btn" data-id="{{ video.id }}" data-name="{{ video.title }}" title="Save to playlist"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M22 13h-4v4h-2v-4h-4v-2h4V7h2v4h4v2zm-8-6H2v1h12V7zM2 12h8v-1H2v1zm0 4h8v-1H2v1z"/></svg><span>Save</span></button>
-          <a class="yt-pill yt-pill--hide-sm" href="/download/{{ video.id }}" title="Download the original file"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M17 18v1H6v-1h11zm-.5-6.6-.7-.7-3.8 3.7V4h-1v10.4l-3.8-3.8-.7.7 5 5 5-4.9z"/></svg><span>Download</span></a>
+          <button type="button" class="yt-pill" id="share-btn" title="Copy link at current time"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M15 5.63 20.66 12 15 18.37V14h-1c-3.96 0-7.14 1-9.75 3.09 1.84-4.07 5.11-6.4 9.89-7.1l.86-.13V5.63M14 3v6C6.22 10.13 3.11 15.33 2 21c2.78-3.97 6.44-6 12-6v6l8-9-8-9z"/></svg><span class="yt-lbl">Share</span></button>
+          <button type="button" class="yt-pill" id="save-btn" data-id="{{ video.id }}" data-name="{{ video.title }}" title="Save to playlist"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M22 13h-4v4h-2v-4h-4v-2h4V7h2v4h4v2zm-8-6H2v1h12V7zM2 12h8v-1H2v1zm0 4h8v-1H2v1z"/></svg><span class="yt-lbl">Save</span></button>
+          <a class="yt-pill yt-pill--hide-sm" href="/download/{{ video.id }}" title="Download the original file"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M17 18v1H6v-1h11zm-.5-6.6-.7-.7-3.8 3.7V4h-1v10.4l-3.8-3.8-.7.7 5 5 5-4.9z"/></svg><span class="yt-lbl">Download</span></a>
           <button class="yt-pill yt-round watch-more" title="More actions" aria-label="More actions"
                   data-id="{{ video.id }}" data-name="{{ video.title }}"
                   data-path="{{ video.host_path }}" data-watch="1"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M7.5 12c0 .83-.67 1.5-1.5 1.5s-1.5-.67-1.5-1.5.67-1.5 1.5-1.5 1.5.67 1.5 1.5zm4.5-1.5c-.83 0-1.5.67-1.5 1.5s.67 1.5 1.5 1.5 1.5-.67 1.5-1.5-.67-1.5-1.5-1.5zm6 0c-.83 0-1.5.67-1.5 1.5s.67 1.5 1.5 1.5 1.5-.67 1.5-1.5-.67-1.5-1.5-1.5z"/></svg></button>

@@ -1142,7 +1142,8 @@ def settings_page():
     return render_template("settings.html", s=get_settings(), defaults=SETTINGS_DEFAULTS, model_opts=model_opts,
                            SORT_IC=SORT_ICONS,
                            whisper_models=WHISPER_MODELS, stats=library_stats(),
-                           private_on=private_unlocked(), has_pin=bool(cfg.get("pin_hash")))
+                           private_on=private_unlocked(), has_pin=bool(cfg.get("pin_hash")),
+                           lan_url=lan_url())
 
 
 def _dir_size(path: str) -> int:
@@ -1170,6 +1171,38 @@ def library_stats() -> dict:
         "models": fmt_size(_dir_size(os.path.join(BASE, "models"))),
         "scanned": rel_time(_scan_state["at"]) if _scan_state["at"] else "never",
     }
+
+
+def lan_url() -> str:
+    """Address other devices on the network can use. The launcher passes the PC's
+    Wi-Fi/LAN IP in OTUBE_LAN_URL; if you opened oTube by IP we use that."""
+    host = request.host.split(":")[0]
+    if host not in ("localhost", "127.0.0.1", "::1", "[::1]"):
+        return request.host_url.rstrip("/")
+    return os.environ.get("OTUBE_LAN_URL", "").rstrip("/")
+
+
+@app.route("/qr.svg")
+def qr_svg():
+    """QR code (SVG) for a URL, used by Settings → Devices."""
+    import io
+    import qrcode
+    import qrcode.image.svg
+    text = request.args.get("text", "")[:300]
+    img = qrcode.make(text, image_factory=qrcode.image.svg.SvgPathImage, box_size=10, border=2)
+    buf = io.BytesIO()
+    img.save(buf)
+    return Response(buf.getvalue(), mimetype="image/svg+xml", headers={"Cache-Control": "max-age=3600"})
+
+
+@app.route("/manifest.webmanifest")
+def manifest():
+    """Lets phones 'Add to Home screen' and open oTube full-screen like an app."""
+    return Response(json.dumps({
+        "name": "oTube", "short_name": "oTube", "start_url": "/", "scope": "/",
+        "display": "standalone", "background_color": "#0f0f0f", "theme_color": "#0f0f0f",
+        "icons": [{"src": url_for("static", filename="favicon.png"), "sizes": "256x256", "type": "image/png", "purpose": "any maskable"}],
+    }), mimetype="application/manifest+json")
 
 
 @app.route("/api/rescan", methods=["POST"])

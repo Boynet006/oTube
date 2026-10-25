@@ -29,3 +29,16 @@ Config and caches are stored in `./data`.
 
 On Windows, `start-otube.vbs` starts Docker Desktop if needed, brings the app up and opens
 the browser. Point a desktop shortcut at it and use `otube.ico` as the icon.
+
+## Phones and other devices
+
+oTube listens on your home network. Start it from the desktop icon and open
+**Settings → Devices** for the address and a QR code to scan with a phone.
+On a phone, "Add to Home screen" gives you an oTube app icon.
+
+If other devices can't connect, allow the port through Windows Firewall for
+private (home) networks. Run once in an **administrator** PowerShell:
+
+    New-NetFirewallRule -DisplayName "oTube (port 8700)" -Direction Inbound -Protocol TCP -LocalPort 8700 -Action Allow -Profile Private
+
+Your Wi-Fi must be set to "Private" in Windows network settings.

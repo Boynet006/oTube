@@ -157,8 +157,12 @@
   // double-click doesn't also pause/play).
   var clickTimer = null;
   var suppressClick = false;  // set after the mini player was dragged by the video
+  // Touch: the first tap only reveals the controls; the next one plays/pauses (YouTube app)
+  var lastPointer = "mouse";
+  wrap.addEventListener("pointerdown", function (e) { lastPointer = e.pointerType; }, true);
   video.addEventListener("click", function () {
     if (suppressClick) { suppressClick = false; return; }
+    if (lastPointer === "touch" && !video.paused && !wrap.classList.contains("show-ui")) { poke(); return; }
     if (clickTimer) return;
     clickTimer = setTimeout(function () {
       clickTimer = null;

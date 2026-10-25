@@ -58,6 +58,14 @@
   // --- Sidebar toggle ---
   var menuBtn = document.getElementById("menu-toggle");
   var sidebar = document.getElementById("sidebar");
+  // Phones / narrow windows: the home sidebar becomes a slide-in drawer too
+  if (menuBtn && sidebar && !sidebar.classList.contains("drawer") && window.matchMedia("(max-width: 1000px)").matches) {
+    sidebar.classList.add("drawer", "hidden");
+    if (!document.getElementById("drawer-scrim")) {
+      var sc = document.createElement("div"); sc.className = "drawer-scrim"; sc.id = "drawer-scrim"; sc.hidden = true;
+      document.body.appendChild(sc);
+    }
+  }
   if (menuBtn && sidebar && sidebar.classList.contains("drawer")) {
     // Watch page: the guide slides in over the page (like YouTube), with a scrim.
     var scrim = document.getElementById("drawer-scrim");
@@ -111,6 +119,25 @@
     if (open) openSet[k] = 1; else delete openSet[k];
     try { localStorage.setItem(TREE_KEY, JSON.stringify(openSet)); } catch (err) {}
   });
+
+  // --- Phone top bar: 🔍 expands the search to full width (YouTube mobile) ---
+  var topbar = document.querySelector(".topbar");
+  var tbSearch = topbar && topbar.querySelector(".topbar__search");
+  if (tbSearch) {
+    var sBtn = tbSearch.querySelector(".search-btn");
+    var sInput = tbSearch.querySelector("input");
+    var back = document.createElement("button");
+    back.type = "button"; back.className = "icon-btn search-back"; back.setAttribute("aria-label", "Close search");
+    back.innerHTML = '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20z"/></svg>';
+    tbSearch.insertBefore(back, tbSearch.firstChild);
+    var phone = window.matchMedia("(max-width: 640px)");
+    if (sBtn && sInput) sBtn.addEventListener("click", function (e) {
+      if (phone.matches && !topbar.classList.contains("searching")) {
+        e.preventDefault(); topbar.classList.add("searching"); sInput.focus();
+      }
+    });
+    back.addEventListener("click", function () { topbar.classList.remove("searching"); });
+  }
 
   // --- Live search (home) ---
   var search = document.getElementById("search");

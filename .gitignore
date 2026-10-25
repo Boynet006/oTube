@@ -8,3 +8,4 @@ progress_*.txt
 .builder/
 __pycache__/
 *.pyc
+.env
