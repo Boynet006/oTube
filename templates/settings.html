@@ -1,3 +1,32 @@
+{# ---- row helpers: each row knows its key + default for "modified" dots and per-row reset ---- #}
+{% macro head(key, label, desc, extra='') -%}
+  <div class="sr-text"><b id="lbl-{{ key|replace('.', '-') }}">{{ label }}</b>{% if desc %}<span>{{ desc }}</span>{% endif %}{{ extra|safe }}</div>
+{%- endmacro %}
+{% macro tail(key) -%}
+  <span class="sr-meta"><span class="sr-saved" aria-hidden="true">✓ Saved</span>
+  <button type="button" class="sr-reset" data-reset="{{ key }}" title="Reset to default" aria-label="Reset to default">↺</button></span>
+{%- endmacro %}
+{% macro toggle(key, label, desc, value) -%}
+  <div class="srow" data-key="{{ key }}" data-search="{{ label|lower }} {{ desc|lower }}">
+    {{ head(key, label, desc) }}{{ tail(key) }}
+    <button type="button" class="tgl {{ 'on' if value }}" data-k="{{ key }}" role="switch" aria-checked="{{ 'true' if value else 'false' }}" aria-labelledby="lbl-{{ key|replace('.', '-') }}"></button>
+  </div>
+{%- endmacro %}
+{% macro select(key, label, desc, value, options) -%}
+  <div class="srow" data-key="{{ key }}" data-search="{{ label|lower }} {{ desc|lower }}">
+    {{ head(key, label, desc) }}{{ tail(key) }}
+    <select data-k="{{ key }}" aria-labelledby="lbl-{{ key|replace('.', '-') }}">
+      {% for v, l in options %}<option value="{{ v }}" {{ 'selected' if value == v }}>{{ l }}</option>{% endfor %}
+    </select>
+  </div>
+{%- endmacro %}
+{% macro range(key, label, desc, value, lo, hi, step, unit, scale=1) -%}
+  <div class="srow" data-key="{{ key }}" data-search="{{ label|lower }} {{ desc|lower }}">
+    {{ head(key, label, desc) }}{{ tail(key) }}
+    <div class="sr-range"><input type="range" data-k="{{ key }}" data-scale="{{ scale }}" data-unit="{{ unit }}" min="{{ lo }}" max="{{ hi }}" step="{{ step }}"
+      value="{{ (value * scale)|round|int }}" aria-labelledby="lbl-{{ key|replace('.', '-') }}"><output>{{ (value * scale)|round|int }}{{ unit }}</output></div>
+  </div>
+{%- endmacro %}
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -6,13 +35,13 @@
   <title>Settings — oTube</title>
   <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-  <script>window.OTUBE = {{ app_settings|tojson }};</script>
+  <script>window.OTUBE = {{ app_settings|tojson }}; window.OTUBE_DEFAULTS = {{ defaults|tojson }};</script>
   <script>(function () { try { var d = JSON.parse(localStorage.getItem("otube.display") || "null") || (window.OTUBE || {}).display || {}, r = document.documentElement;
     var b = d.b || 1, c = d.c || 1; r.style.setProperty("--app-b", b); r.style.setProperty("--app-c", c);
     if (b < 1 || c != 1) r.classList.add("app-filter");
     r.style.setProperty("--app-warm", (d.n ? (d.w == null ? 50 : d.w) / 100 * 0.45 : 0).toFixed(3)); } catch (e) {} })();</script>
 </head>
-<body>
+<body class="settings-page">
   <header class="topbar">
     <div class="topbar__left">
       <a class="brand" href="/">
@@ -20,176 +49,160 @@
         <span class="brand__text"><span class="brand__o">o</span>Tube</span>
       </a>
     </div>
-    <div class="topbar__right"><a class="yt-pill" href="/">← Back to videos</a></div>
+    <div class="topbar__search">
+      <label class="set-search"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.6-.58 3.07-1.54 4.2l.27.3h.77l5 5-1.5 1.5-5-5v-.79l-.3-.27A6.5 6.5 0 1 1 9.5 3m0 2A4.5 4.5 0 1 0 14 9.5 4.5 4.5 0 0 0 9.5 5Z"/></svg>
+        <input type="search" id="set-search" placeholder="Search settings" autocomplete="off" aria-label="Search settings">
+        <kbd>/</kbd>
+      </label>
+    </div>
+    <div class="topbar__right">
+      <div class="display-ctl">
+        <button type="button" class="icon-btn" id="display-btn" aria-haspopup="dialog" aria-expanded="false" title="Display: brightness &amp; night light"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10zM2 13h2a1 1 0 0 0 0-2H2a1 1 0 0 0 0 2zm18 0h2a1 1 0 0 0 0-2h-2a1 1 0 0 0 0 2zM11 2v2a1 1 0 0 0 2 0V2a1 1 0 0 0-2 0zm0 18v2a1 1 0 0 0 2 0v-2a1 1 0 0 0-2 0z"/></svg></button>
+      </div>
+      <button type="button" class="mode-btn {{ 'on' if private_on }}" id="mode-btn"
+              data-private="{{ '1' if private_on else '0' }}" data-pin="{{ '1' if has_pin else '0' }}"
+              title="{{ 'Private mode: showing only private folders. Click to go back to Family mode.' if private_on else 'Family mode: showing only public folders. Click to switch to Private mode.' }}">
+        {% if private_on %}<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 2a5 5 0 0 0-5 5h2a3 3 0 0 1 6 0v3H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2h-1V7a5 5 0 0 0-5-5z"/></svg><span>Private</span>{% else %}<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 2a5 5 0 0 0-5 5v3H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2h-1V7a5 5 0 0 0-5-5zm-3 8V7a3 3 0 0 1 6 0v3H9z"/></svg><span>Family</span>{% endif %}
+      </button>
+    </div>
   </header>
 
-  <main class="settings" id="settings">
-    <div class="settings__head">
-      <h1>Settings</h1>
-      <p>Defaults for the whole app, on every device. Changes save automatically and apply right away in this browser.
-         Quick choices you make elsewhere (like switching grid/list) are remembered per browser until you change the default here.</p>
-    </div>
+  <div class="set-layout">
+    <nav class="set-nav" aria-label="Settings sections">
+      <a class="set-back" href="/">← Back to videos</a>
+      <a class="set-nav__item" href="#sec-library" data-sec="sec-library"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M4 6H2v14a2 2 0 0 0 2 2h14v-2H4V6zm16-4H8a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2zm-8 12.5v-9l6 4.5-6 4.5z"/></svg><span>Library</span></a>
+      <a class="set-nav__item" href="#sec-player" data-sec="sec-player"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M8 5.14v13.72a1 1 0 0 0 1.5.86l11-6.86a1 1 0 0 0 0-1.72l-11-6.86A1 1 0 0 0 8 5.14z"/></svg><span>Player</span></a>
+      <a class="set-nav__item" href="#sec-mini" data-sec="sec-mini"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M19 11h-8v6h8v-6zm4 8V4.98C23 3.88 22.1 3 21 3H3a2 2 0 0 0-2 1.98V19c0 1.1.9 2 2 2h18a2 2 0 0 0 2-2zm-2 .02H3V4.97h18v14.05z"/></svg><span>Mini player</span></a>
+      <a class="set-nav__item" href="#sec-display" data-sec="sec-display"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10zM2 13h2a1 1 0 0 0 0-2H2a1 1 0 0 0 0 2zm18 0h2a1 1 0 0 0 0-2h-2a1 1 0 0 0 0 2zM11 2v2a1 1 0 0 0 2 0V2a1 1 0 0 0-2 0zm0 18v2a1 1 0 0 0 2 0v-2a1 1 0 0 0-2 0z"/></svg><span>Display</span></a>
+      <a class="set-nav__item" href="#sec-captions" data-sec="sec-captions"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M19 4H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2zm-8 7H9.5v-.5h-2v3h2V13H11v1a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1v-4a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1zm7 0h-1.5v-.5h-2v3h2V13H18v1a1 1 0 0 1-1 1h-3a1 1 0 0 1-1-1v-4a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1z"/></svg><span>Captions (AI)</span></a>
+      <a class="set-nav__item" href="#sec-privacy" data-sec="sec-privacy"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M12 2a5 5 0 0 0-5 5v3H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2h-1V7a5 5 0 0 0-5-5zm-3 8V7a3 3 0 0 1 6 0v3H9z"/></svg><span>Privacy</span></a>
+      <a class="set-nav__item" href="#sec-tools" data-sec="sec-tools"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M22.7 19 13.6 9.9c.9-2.3.4-5-1.5-6.9-2-2-5-2.4-7.4-1.3L9 6 6 9 1.6 4.7C.4 7.1.9 10.1 2.9 12.1c1.9 1.9 4.6 2.4 6.9 1.5l9.1 9.1c.4.4 1 .4 1.4 0l2.3-2.3c.5-.4.5-1.1.1-1.4z"/></svg><span>Library tools</span></a>
+      <a class="set-nav__item" href="#sec-keys" data-sec="sec-keys"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M20 5H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm-9 3h2v2h-2V8zm0 3h2v2h-2v-2zM8 8h2v2H8V8zm0 3h2v2H8v-2zm-1 2H5v-2h2v2zm0-3H5V8h2v2zm9 7H8v-2h8v2zm0-4h-2v-2h2v2zm0-3h-2V8h2v2zm3 3h-2v-2h2v2zm0-3h-2V8h2v2z"/></svg><span>Keyboard shortcuts</span></a>
+    </nav>
 
-    <section class="set-card">
-      <h2>Library</h2>
-      <div class="set-row"><div><b>Default sort</b><span>How videos are ordered when you open a folder</span></div>
-        <select data-k="sort">
-          {% for v, l in [('name','Name'),('newest','Newest'),('size','Size'),('duration','Duration'),('random','Random')] %}
-          <option value="{{ v }}" {{ 'selected' if s.sort == v }}>{{ l }}</option>{% endfor %}
-        </select></div>
-      <div class="set-row"><div><b>Layout</b><span>Grid of thumbnails or a list</span></div>
-        <div class="seg" data-k="view">
-          <button type="button" data-v="grid" class="{{ 'on' if s.view == 'grid' }}">Grid</button>
-          <button type="button" data-v="list" class="{{ 'on' if s.view == 'list' }}">List</button>
-        </div></div>
-      <div class="set-row"><div><b>Thumbnail size</b><span class="set-val" data-show="thumbw">{{ s.thumbw }}px</span></div>
-        <input type="range" data-k="thumbw" min="120" max="640" step="10" value="{{ s.thumbw }}"></div>
-      <div class="set-row"><div><b>Continue watching</b><span>Shelf of half-watched videos on the home page</span></div>
-        <button type="button" class="tgl {{ 'on' if s.continueShelf }}" data-k="continueShelf" role="switch"></button></div>
-      <div class="set-row"><div><b>Hover previews</b><span>Play a muted preview when hovering a thumbnail</span></div>
-        <button type="button" class="tgl {{ 'on' if s.hoverPreview }}" data-k="hoverPreview" role="switch"></button></div>
-      <div class="set-row"><div><b>"New" badge</b><span>Mark files added within this many days</span></div>
-        <select data-k="newDays">
-          {% for v in [1, 3, 7, 14, 30] %}<option value="{{ v }}" {{ 'selected' if s.newDays == v }}>{{ v }} day{{ '' if v == 1 else 's' }}</option>{% endfor %}
-        </select></div>
-    </section>
+    <main class="set-main" id="settings">
+      <div class="set-hero">
+        <h1>Settings</h1>
+        <p>Defaults for the whole app, on every device. Changes save as you make them.
+          <span class="dot-demo"></span> marks a setting you've changed from its default.</p>
+      </div>
+      <div class="set-empty" id="set-empty" hidden>No settings match “<span></span>”.</div>
 
-    <section class="set-card">
-      <h2>Player</h2>
-      <div class="set-row"><div><b>Autoplay next video</b><span>Play the next video when one ends</span></div>
-        <button type="button" class="tgl {{ 'on' if s.autoplay }}" data-k="autoplay" role="switch"></button></div>
-      <div class="set-row"><div><b>Up next countdown</b><span>Seconds before the next video starts</span></div>
-        <select data-k="upnextSeconds">
-          {% for v in [0, 3, 5, 10, 15] %}<option value="{{ v }}" {{ 'selected' if s.upnextSeconds == v }}>{{ 'Straight away' if v == 0 else v ~ ' seconds' }}</option>{% endfor %}
-        </select></div>
-      <div class="set-row"><div><b>Resume where I left off</b><span>Continue from the last position</span></div>
-        <button type="button" class="tgl {{ 'on' if s.resume }}" data-k="resume" role="switch"></button></div>
-      <div class="set-row"><div><b>Volume</b><span class="set-val" data-show="volume">{{ s.volume }}%</span></div>
-        <input type="range" data-k="volume" min="0" max="100" step="5" value="{{ s.volume }}"></div>
-      <div class="set-row"><div><b>Playback speed</b><span>Starting speed for every video</span></div>
-        <select data-k="speed">
-          {% for v in [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2] %}<option value="{{ v }}" {{ 'selected' if s.speed == v }}>{{ 'Normal' if v == 1 else v ~ 'x' }}</option>{% endfor %}
-        </select></div>
-      <div class="set-row"><div><b>Captions on</b><span>Turn subtitles on when a video has them</span></div>
-        <button type="button" class="tgl {{ 'on' if s.captionsOn }}" data-k="captionsOn" role="switch"></button></div>
-      <div class="set-row"><div><b>Theater mode</b><span>Open videos in the wide layout</span></div>
-        <button type="button" class="tgl {{ 'on' if s.theater }}" data-k="theater" role="switch"></button></div>
-      <div class="set-row"><div><b>Arrow-key seek</b><span>Seconds to skip with ← / →</span></div>
-        <select data-k="seekStep">
-          {% for v in [3, 5, 10, 15, 30] %}<option value="{{ v }}" {{ 'selected' if s.seekStep == v }}>{{ v }} seconds</option>{% endfor %}
-        </select></div>
-      <div class="set-row"><div><b>Mini player mode</b><span>Play videos in a floating player instead of opening them</span></div>
-        <button type="button" class="tgl {{ 'on' if s.miniMode }}" data-k="miniMode" role="switch"></button></div>
-    </section>
+      <section class="set-sec" id="sec-library" aria-labelledby="h-library">
+        <h2 id="h-library"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M4 6H2v14a2 2 0 0 0 2 2h14v-2H4V6zm16-4H8a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2zm-8 12.5v-9l6 4.5-6 4.5z"/></svg> Library</h2>
+        <div class="srow srow--block" data-key="sort" data-search="default sort order name newest size duration random shuffle">
+          {{ head('sort', 'Default sort', 'How videos are ordered when you open the library or a folder') }}{{ tail('sort') }}
+          <div class="opt-chips" role="radiogroup" aria-labelledby="lbl-sort" data-k="sort">
+            {% for v, l in [('name','Name'),('newest','Newest'),('size','Size'),('duration','Duration'),('random','Random')] %}
+            <button type="button" role="radio" aria-checked="{{ 'true' if s.sort == v else 'false' }}" class="opt-chip {{ 'on' if s.sort == v }}" data-v="{{ v }}">{{ SORT_IC[v]|safe }}<span>{{ l }}</span></button>
+            {% endfor %}
+          </div>
+        </div>
+        <div class="srow srow--block" data-key="view" data-search="layout grid list view">
+          {{ head('view', 'Layout', 'Thumbnails in a grid, or one video per row') }}{{ tail('view') }}
+          <div class="opt-cards" role="radiogroup" aria-labelledby="lbl-view" data-k="view">
+            <button type="button" role="radio" aria-checked="{{ 'true' if s.view == 'grid' else 'false' }}" class="opt-card {{ 'on' if s.view == 'grid' }}" data-v="grid"><svg viewBox="0 0 64 40" width="64" height="40" aria-hidden="true"><g fill="currentColor"><rect x="2" y="2" width="18" height="11" rx="2"/><rect x="23" y="2" width="18" height="11" rx="2"/><rect x="44" y="2" width="18" height="11" rx="2"/><rect x="2" y="16" width="14" height="2" rx="1" opacity=".5"/><rect x="23" y="16" width="14" height="2" rx="1" opacity=".5"/><rect x="44" y="16" width="14" height="2" rx="1" opacity=".5"/><rect x="2" y="23" width="18" height="11" rx="2"/><rect x="23" y="23" width="18" height="11" rx="2"/><rect x="44" y="23" width="18" height="11" rx="2"/></g></svg><span>Grid</span></button>
+            <button type="button" role="radio" aria-checked="{{ 'true' if s.view == 'list' else 'false' }}" class="opt-card {{ 'on' if s.view == 'list' }}" data-v="list"><svg viewBox="0 0 64 40" width="64" height="40" aria-hidden="true"><g fill="currentColor"><rect x="2" y="2" width="16" height="9" rx="2"/><rect x="21" y="3" width="30" height="2.5" rx="1"/><rect x="21" y="7" width="20" height="2" rx="1" opacity=".5"/><rect x="2" y="15" width="16" height="9" rx="2"/><rect x="21" y="16" width="34" height="2.5" rx="1"/><rect x="21" y="20" width="18" height="2" rx="1" opacity=".5"/><rect x="2" y="28" width="16" height="9" rx="2"/><rect x="21" y="29" width="26" height="2.5" rx="1"/><rect x="21" y="33" width="22" height="2" rx="1" opacity=".5"/></g></svg><span>List</span></button>
+          </div>
+        </div>
+        <div class="srow srow--block" data-key="thumbw" data-search="thumbnail size width card">
+          {{ head('thumbw', 'Thumbnail size', 'Drag to see the size change') }}{{ tail('thumbw') }}
+          <div class="thumb-preview">
+            <div class="sr-range"><input type="range" data-k="thumbw" data-scale="1" data-unit="px" min="120" max="640" step="10" value="{{ s.thumbw }}" aria-labelledby="lbl-thumbw"><output>{{ s.thumbw }}px</output></div>
+            <div class="tp-stage"><div class="tp-card" id="tp-card"><div class="tp-thumb"><span>2:08</span></div><div class="tp-line"></div><div class="tp-line short"></div></div></div>
+          </div>
+        </div>
+        {{ toggle('continueShelf', 'Continue watching', 'Shelf of half-watched videos on the home page', s.continueShelf) }}
+        {{ toggle('hoverPreview', 'Hover previews', 'Play a muted preview when hovering a thumbnail', s.hoverPreview) }}
+        {{ select('newDays', '“New” badge', 'Mark files added within this many days', s.newDays, [(1,'1 day'),(3,'3 days'),(7,'7 days'),(14,'14 days'),(30,'30 days')]) }}
+      </section>
 
-    <section class="set-card">
-      <h2>Display</h2>
-      <div class="set-row"><div><b>App brightness</b><span class="set-val" data-show="display.b">{{ (s.display.b * 100)|round|int }}%</span></div>
-        <input type="range" data-k="display.b" data-scale="100" min="20" max="100" step="1" value="{{ (s.display.b * 100)|round|int }}"></div>
-      <div class="set-row"><div><b>Contrast</b><span class="set-val" data-show="display.c">{{ (s.display.c * 100)|round|int }}%</span></div>
-        <input type="range" data-k="display.c" data-scale="100" min="70" max="140" step="1" value="{{ (s.display.c * 100)|round|int }}"></div>
-      <div class="set-row"><div><b>Night light</b><span>Warm, low-blue tint</span></div>
-        <button type="button" class="tgl {{ 'on' if s.display.n }}" data-k="display.n" role="switch"></button></div>
-      <div class="set-row"><div><b>Warmth</b><span class="set-val" data-show="display.w">{{ s.display.w }}%</span></div>
-        <input type="range" data-k="display.w" min="0" max="100" step="1" value="{{ s.display.w }}"></div>
-    </section>
+      <section class="set-sec" id="sec-player" aria-labelledby="h-player">
+        <h2 id="h-player"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M8 5.14v13.72a1 1 0 0 0 1.5.86l11-6.86a1 1 0 0 0 0-1.72l-11-6.86A1 1 0 0 0 8 5.14z"/></svg> Player</h2>
+        {{ toggle('autoplay', 'Autoplay next video', 'Play the next video when one ends', s.autoplay) }}
+        {{ select('upnextSeconds', 'Up next countdown', 'Time before the next video starts', s.upnextSeconds, [(0,'Straight away'),(3,'3 seconds'),(5,'5 seconds'),(10,'10 seconds'),(15,'15 seconds')]) }}
+        {{ toggle('resume', 'Resume where I left off', 'Continue from the last position', s.resume) }}
+        {{ range('volume', 'Volume', 'Starting volume', s.volume, 0, 100, 5, '%') }}
+        {{ select('speed', 'Playback speed', 'Starting speed for every video', s.speed, [(0.5,'0.5×'),(0.75,'0.75×'),(1,'Normal'),(1.25,'1.25×'),(1.5,'1.5×'),(1.75,'1.75×'),(2,'2×')]) }}
+        {{ toggle('captionsOn', 'Captions on', 'Turn subtitles on when a video has them', s.captionsOn) }}
+        {{ toggle('theater', 'Theater mode', 'Open videos in the wide layout', s.theater) }}
+        {{ select('seekStep', 'Arrow-key seek', 'Seconds to skip with ← / →', s.seekStep, [(3,'3 seconds'),(5,'5 seconds'),(10,'10 seconds'),(15,'15 seconds'),(30,'30 seconds')]) }}
+      </section>
 
-    <section class="set-card">
-      <h2>Captions (AI)</h2>
-      <div class="set-row"><div><b>Speech-to-text model</b><span>Bigger is more accurate but slower; downloads on first use</span></div>
-        <select data-k="whisperModel">
-          {% for m in whisper_models %}<option value="{{ m }}" {{ 'selected' if s.whisperModel == m }}>{{ m }}{{ ' (recommended)' if m == 'large-v3-turbo' }}</option>{% endfor %}
-        </select></div>
-    </section>
+      <section class="set-sec" id="sec-mini" aria-labelledby="h-mini">
+        <h2 id="h-mini"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M19 11h-8v6h8v-6zm4 8V4.98C23 3.88 22.1 3 21 3H3a2 2 0 0 0-2 1.98V19c0 1.1.9 2 2 2h18a2 2 0 0 0 2-2zm-2 .02H3V4.97h18v14.05z"/></svg> Mini player</h2>
+        {{ toggle('miniMode', 'Mini player mode', 'Play videos in a floating player instead of opening them', s.miniMode) }}
+        <p class="set-tip">Tip: drag it by the video or title bar, resize from any corner, double-click the bar to reset.</p>
+      </section>
 
-    <div class="settings__foot">
-      <button type="button" class="pin-btn" id="set-reset">Reset all to defaults</button>
-    </div>
-  </main>
+      <section class="set-sec" id="sec-display" aria-labelledby="h-display">
+        <h2 id="h-display"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10zM2 13h2a1 1 0 0 0 0-2H2a1 1 0 0 0 0 2zm18 0h2a1 1 0 0 0 0-2h-2a1 1 0 0 0 0 2zM11 2v2a1 1 0 0 0 2 0V2a1 1 0 0 0-2 0zm0 18v2a1 1 0 0 0 2 0v-2a1 1 0 0 0-2 0z"/></svg> Display</h2>
+        <div class="disp-preview" aria-hidden="true">
+          <div class="dp-sky"></div><div class="dp-sun"></div><div class="dp-hill a"></div><div class="dp-hill b"></div>
+          <span>Live preview: the whole app follows these</span>
+        </div>
+        {{ range('display.b', 'App brightness', 'Dims everything, like a screen dimmer', s.display.b, 20, 100, 1, '%', 100) }}
+        {{ range('display.c', 'Contrast', 'Fine-tune for HDR or very bright screens', s.display.c, 70, 140, 1, '%', 100) }}
+        {{ toggle('display.n', 'Night light', 'Warm, low-blue tint for the evening', s.display.n) }}
+        {{ range('display.w', 'Warmth', 'How warm the night light is', s.display.w, 0, 100, 1, '%') }}
+        <div class="preset-row"><span>Presets</span>
+          <button type="button" class="pin-btn" data-preset="normal">☀ Normal</button>
+          <button type="button" class="pin-btn" data-preset="dim">🌥 Dim</button>
+          <button type="button" class="pin-btn" data-preset="night">🌙 Night</button>
+        </div>
+      </section>
+
+      <section class="set-sec" id="sec-captions" aria-labelledby="h-captions">
+        <h2 id="h-captions"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M19 4H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2zm-8 7H9.5v-.5h-2v3h2V13H11v1a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1v-4a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1zm7 0h-1.5v-.5h-2v3h2V13H18v1a1 1 0 0 1-1 1h-3a1 1 0 0 1-1-1v-4a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1z"/></svg> Captions (AI)</h2>
+        {{ select('whisperModel', 'Speech-to-text model', 'Bigger is more accurate but slower; downloads on first use', s.whisperModel, model_opts) }}
+        <div class="model-scale" aria-hidden="true"><span>⚡ Faster</span><span class="ms-bar"></span><span>🎯 More accurate</span></div>
+      </section>
+
+      <section class="set-sec" id="sec-privacy" aria-labelledby="h-privacy">
+        <h2 id="h-privacy"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M12 2a5 5 0 0 0-5 5v3H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2h-1V7a5 5 0 0 0-5-5zm-3 8V7a3 3 0 0 1 6 0v3H9z"/></svg> Privacy</h2>
+        <div class="srow" data-search="family private mode pin lock">
+          <div class="sr-text"><b>Current mode</b><span>{{ 'Private: only private folders are shown' if private_on else 'Family: only public folders are shown' }}</span></div>
+          <span class="mode-pill {{ 'on' if private_on }}">{% if private_on %}<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 2a5 5 0 0 0-5 5h2a3 3 0 0 1 6 0v3H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2h-1V7a5 5 0 0 0-5-5z"/></svg> Private{% else %}<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 2a5 5 0 0 0-5 5v3H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2h-1V7a5 5 0 0 0-5-5zm-3 8V7a3 3 0 0 1 6 0v3H9z"/></svg> Family{% endif %}</span>
+        </div>
+        <div class="srow" data-search="pin password lock private">
+          <div class="sr-text"><b>PIN for Private mode</b><span>{{ 'A PIN is set.' if has_pin else 'No PIN: anyone can switch to Private mode.' }}{% if not private_on %} Switch to Private mode to change it.{% endif %}</span></div>
+          {% if private_on %}<button type="button" class="pin-btn" id="pin-btn">{{ 'Change PIN' if has_pin else 'Set PIN' }}</button>
+          {% else %}<span class="sr-badge {{ 'ok' if has_pin else 'warn' }}">{{ 'PIN on' if has_pin else 'No PIN' }}</span>{% endif %}
+        </div>
+      </section>
+
+      <section class="set-sec" id="sec-tools" aria-labelledby="h-tools">
+        <h2 id="h-tools"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M22.7 19 13.6 9.9c.9-2.3.4-5-1.5-6.9-2-2-5-2.4-7.4-1.3L9 6 6 9 1.6 4.7C.4 7.1.9 10.1 2.9 12.1c1.9 1.9 4.6 2.4 6.9 1.5l9.1 9.1c.4.4 1 .4 1.4 0l2.3-2.3c.5-.4.5-1.1.1-1.4z"/></svg> Library tools</h2>
+        <div class="stat-grid" id="stat-grid">
+          <div class="stat"><b data-stat="videos">{{ stats.videos }}</b><span>videos</span></div>
+          <div class="stat"><b data-stat="folders">{{ stats.folders }}</b><span>folders</span></div>
+          <div class="stat"><b data-stat="size">{{ stats.size }}</b><span>on disk</span></div>
+          <div class="stat"><b data-stat="thumbs">{{ stats.thumbs }}</b><span>thumbnails</span></div>
+          <div class="stat"><b data-stat="captions">{{ stats.captions }}</b><span>caption files</span></div>
+          <div class="stat"><b data-stat="cache">{{ stats.cache }}</b><span>cache</span></div>
+        </div>
+        <div class="srow" data-search="rescan refresh library scan new files">
+          <div class="sr-text"><b>Rescan library</b><span>Pick up new or removed files now. Last scan: <span data-stat="scanned">{{ stats.scanned }}</span></span></div>
+          <button type="button" class="pin-btn" id="rescan">↻ Rescan now</button>
+        </div>
+      </section>
+
+      <section class="set-sec" id="sec-keys" aria-labelledby="h-keys">
+        <h2 id="h-keys"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M20 5H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm-9 3h2v2h-2V8zm0 3h2v2h-2v-2zM8 8h2v2H8V8zm0 3h2v2H8v-2zm-1 2H5v-2h2v2zm0-3H5V8h2v2zm9 7H8v-2h8v2zm0-4h-2v-2h2v2zm0-3h-2V8h2v2zm3 3h-2v-2h2v2zm0-3h-2V8h2v2z"/></svg> Keyboard shortcuts</h2>
+        <div class="keys-grid" data-search="keyboard shortcuts keys hotkeys">
+          {% for k, d in [('Space / K','Play / pause'),('J / L','Back / forward 10s'),('← / →','Seek (see Arrow-key seek)'),('↑ / ↓','Volume'),('M','Mute'),('F','Full screen'),('T','Theater mode'),('I','Picture-in-picture'),('C','Captions on / off'),('B / Shift+B','Video darker / brighter'),('Shift+N / Shift+P','Next / previous video'),('< / >','Slower / faster'),('0–9','Jump to 0–90%'),(', / .','Frame step (paused)'),('Ctrl+A','Select all videos'),('Esc','Close / clear selection'),('/','Search settings (this page)'),('?','Shortcuts (watch page)')] %}
+          <div class="kg-row"><kbd>{{ k }}</kbd><span>{{ d }}</span></div>
+          {% endfor %}
+        </div>
+      </section>
+
+      <div class="set-foot">
+        <button type="button" class="pin-btn danger-ghost" id="set-reset">Reset all settings</button>
+      </div>
+    </main>
+  </div>
 
   <script src="{{ url_for('static', filename='script.js') }}"></script>
-  <script>
-  (function () {
-    "use strict";
-    var root = document.getElementById("settings"), S = window.OTUBE;
-    // per-browser overrides that each setting replaces when you change it here
-    var LOCAL = {
-      view: ["kidtube.view"], thumbw: ["kidtube.thumbw"], miniMode: ["otube.miniMode"], display: ["otube.display"],
-      autoplay: ["otube.player:autoplay"], volume: ["otube.player:vol"], theater: ["otube.player:theater"],
-      captionsOn: ["otube.player:ccOn"]
-    };
-    function dropLocal(key) {
-      (LOCAL[key] || []).forEach(function (k) {
-        try {
-          var parts = k.split(":");
-          if (parts.length === 1) { localStorage.removeItem(k); return; }
-          var o = JSON.parse(localStorage.getItem(parts[0]) || "{}"); delete o[parts[1]];
-          localStorage.setItem(parts[0], JSON.stringify(o));
-        } catch (e) {}
-      });
-    }
-    var t;
-    function toast(msg) {
-      var el = document.getElementById("note-toast");
-      if (!el) { el = document.createElement("div"); el.id = "note-toast"; el.className = "note-toast"; document.body.appendChild(el); }
-      el.textContent = msg; el.classList.add("show"); clearTimeout(t); t = setTimeout(function () { el.classList.remove("show"); }, 1500);
-    }
-    function save(key, value) {
-      var body = {}, top = key.split(".")[0];
-      if (key.indexOf(".") !== -1) { S.display[key.split(".")[1]] = value; body.display = S.display; }
-      else { S[key] = value; body[key] = value; }
-      dropLocal(top);
-      if (top === "display") applyDisplay();
-      fetch("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
-        .then(function (r) { return r.json(); }).then(function (d) { toast(d.ok ? "Saved" : "Couldn't save"); });
-    }
-    function applyDisplay() {
-      var d = S.display, r = document.documentElement;
-      r.style.setProperty("--app-b", d.b); r.style.setProperty("--app-c", d.c);
-      r.classList.toggle("app-filter", d.b < 1 || d.c !== 1);
-      r.style.setProperty("--app-warm", (d.n ? d.w / 100 * 0.45 : 0).toFixed(3));
-    }
-    function num(v) { var n = Number(v); return isNaN(n) ? v : n; }
-    root.querySelectorAll("select[data-k]").forEach(function (el) {
-      el.addEventListener("change", function () { save(el.getAttribute("data-k"), num(el.value)); });
-    });
-    root.querySelectorAll("input[type=range][data-k]").forEach(function (el) {
-      var k = el.getAttribute("data-k"), scale = +el.getAttribute("data-scale") || 1;
-      var show = root.querySelector('[data-show="' + k + '"]');
-      function fill() { el.style.setProperty("--fill", ((el.value - el.min) / (el.max - el.min) * 100) + "%"); }
-      fill();
-      el.addEventListener("input", function () {
-        fill();
-        if (show) show.textContent = el.value + (k === "thumbw" ? "px" : "%");
-        if (k.indexOf("display.") === 0) { S.display[k.split(".")[1]] = el.value / scale; applyDisplay(); }
-      });
-      el.addEventListener("change", function () { save(k, el.value / scale); });
-    });
-    root.querySelectorAll(".tgl[data-k]").forEach(function (el) {
-      el.setAttribute("aria-checked", el.classList.contains("on") ? "true" : "false");
-      el.addEventListener("click", function () {
-        var on = !el.classList.contains("on");
-        el.classList.toggle("on", on); el.setAttribute("aria-checked", on ? "true" : "false");
-        save(el.getAttribute("data-k"), on);
-      });
-    });
-    root.querySelectorAll(".seg[data-k]").forEach(function (el) {
-      el.addEventListener("click", function (e) {
-        var b = e.target.closest("[data-v]"); if (!b) return;
-        el.querySelectorAll("button").forEach(function (x) { x.classList.toggle("on", x === b); });
-        save(el.getAttribute("data-k"), b.getAttribute("data-v"));
-      });
-    });
-    document.getElementById("set-reset").addEventListener("click", function () {
-      window.otubeConfirm({ title: "Reset all settings?", text: "Every setting goes back to its default.", confirm: "Reset", danger: true })
-        .then(function (ok) {
-          if (!ok) return;
-          Object.keys(LOCAL).forEach(dropLocal);
-          fetch("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reset: true }) })
-            .then(function () { location.reload(); });
-        });
-    });
-  })();
-  </script>
+  <script src="{{ url_for('static', filename='settings.js') }}"></script>
 </body>
 </html>

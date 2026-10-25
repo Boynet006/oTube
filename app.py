@@ -159,6 +159,7 @@ SETTINGS_DEFAULTS = {
     "whisperModel": os.environ.get("OTUBE_WHISPER_MODEL", "large-v3-turbo"),
 }
 WHISPER_MODELS = ["tiny", "base", "small", "medium", "large-v3-turbo", "large-v3"]
+SORT_ICONS = {'name': '<svg viewBox="0 0 24 24" width="22" height="22"><text x="2" y="11" font-size="9" font-weight="700" fill="currentColor">A</text><text x="2" y="21" font-size="9" font-weight="700" fill="currentColor">Z</text><path fill="currentColor" d="M16 4h2v12h3l-4 4-4-4h3z"/></svg>', 'newest': '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm0 18a8 8 0 1 1 0-16 8 8 0 0 1 0 16zm.5-13H11v6l5.2 3.2.8-1.3-4.5-2.7V7z"/></svg>', 'size': '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M2 20h20v-4H2v4zm2-3h2v2H4v-2zM2 4v4h20V4H2zm4 3H4V5h2v2zm-4 7h20v-4H2v4zm2-3h2v2H4v-2z"/></svg>', 'duration': '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M15 1H9v2h6V1zm-4 13h2V8h-2v6zm8.03-6.61 1.42-1.42c-.43-.51-.9-.99-1.41-1.41l-1.42 1.42A8.96 8.96 0 0 0 12 4a9 9 0 1 0 9 9c0-2.12-.74-4.07-1.97-5.61zM12 20a7 7 0 1 1 0-14 7 7 0 0 1 0 14z"/></svg>', 'random': '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M10.59 9.17 5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm.33 9.41-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z"/></svg>'}
 
 
 def get_settings() -> dict:
@@ -1136,7 +1137,45 @@ def inject_settings():
 
 @app.route("/settings")
 def settings_page():
-    return render_template("settings.html", s=get_settings(), whisper_models=WHISPER_MODELS)
+    cfg = load_config()
+    model_opts = [(m, m + (" (recommended)" if m == "large-v3-turbo" else "")) for m in WHISPER_MODELS]
+    return render_template("settings.html", s=get_settings(), defaults=SETTINGS_DEFAULTS, model_opts=model_opts,
+                           SORT_IC=SORT_ICONS,
+                           whisper_models=WHISPER_MODELS, stats=library_stats(),
+                           private_on=private_unlocked(), has_pin=bool(cfg.get("pin_hash")))
+
+
+def _dir_size(path: str) -> int:
+    total = 0
+    for root, _d, files in os.walk(path):
+        for f in files:
+            try:
+                total += os.path.getsize(os.path.join(root, f))
+            except OSError:
+                pass
+    return total
+
+
+def library_stats() -> dict:
+    items = visible(scan())
+    cfg = load_config()
+    shown = [f for f in cfg.get("video_folders", []) if folder_shown(f, private_folders(cfg))]
+    return {
+        "videos": len({v["id"] for v in items}),
+        "folders": len(shown),
+        "size": fmt_size(sum(v["size"] for v in {v["id"]: v for v in items}.values())),
+        "thumbs": len(os.listdir(THUMB_DIR)),
+        "captions": len(glob.glob(os.path.join(AUTO_SUBS_DIR, "*.vtt"))),
+        "cache": fmt_size(_dir_size(TRANS_DIR) + _dir_size(THUMB_DIR)),
+        "models": fmt_size(_dir_size(os.path.join(BASE, "models"))),
+        "scanned": rel_time(_scan_state["at"]) if _scan_state["at"] else "never",
+    }
+
+
+@app.route("/api/rescan", methods=["POST"])
+def api_rescan():
+    rescan_now()
+    return {"ok": True, "stats": library_stats()}
 
 
 @app.route("/api/settings", methods=["GET", "POST"])
