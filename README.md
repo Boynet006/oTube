@@ -37,7 +37,8 @@ oTube listens on your home network. Start it from the desktop icon and open
 On a phone, "Add to Home screen" gives you an oTube app icon.
 
 If other devices can't connect, allow the port through Windows Firewall for
-private (home) networks. Run once in an **administrator** PowerShell:
+private (home) networks: double-click **allow-phones.cmd** (it asks for admin once),
+or run in an **administrator** PowerShell:
 
     New-NetFirewallRule -DisplayName "oTube (port 8700)" -Direction Inbound -Protocol TCP -LocalPort 8700 -Action Allow -Profile Private
 
