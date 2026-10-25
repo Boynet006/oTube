@@ -553,13 +553,101 @@
       });
     });
   }
+  // --- Folder ⋮ menu (sidebar folders and subfolders) ---
+  var fmenu = null, fcur = null;
+  var PRIVATE_ON = !!document.querySelector('.mode-btn.on');
+  function fItem(act, label, cls) {
+    return '<button type="button" role="menuitem" data-fact="' + act + '"' + (cls ? ' class="' + cls + '"' : '') + '>' + label + '</button>';
+  }
+  function closeFolderMenu() {
+    if (!fmenu || fmenu.hidden) return;
+    fmenu.hidden = true;
+    if (fcur) { fcur.btn.classList.remove("open"); fcur.btn.setAttribute("aria-expanded", "false"); }
+  }
+  function openFolderMenu(btn) {
+    var row = btn.closest(".nav-item");
+    var isSub = row.classList.contains("sub");
+    fcur = { btn: btn, row: row, folder: row.getAttribute("data-folder"), sub: row.getAttribute("data-sub") || "",
+             host: row.getAttribute("data-host"), name: row.getAttribute("data-name") };
+    if (!fmenu) {
+      fmenu = document.createElement("div");
+      fmenu.className = "ctx-menu folder-menu"; fmenu.setAttribute("role", "menu"); fmenu.hidden = true;
+      document.body.appendChild(fmenu);
+      fmenu.addEventListener("click", onFolderAction);
+      fmenu.addEventListener("keydown", function (e) {
+        var items = [].slice.call(fmenu.querySelectorAll("button:not([disabled])"));
+        var i = items.indexOf(document.activeElement);
+        if (e.key === "ArrowDown") { e.preventDefault(); items[(i + 1) % items.length].focus(); }
+        else if (e.key === "ArrowUp") { e.preventDefault(); items[(i - 1 + items.length) % items.length].focus(); }
+        else if (e.key === "Escape") { e.preventDefault(); closeFolderMenu(); fcur.btn.focus(); }
+        else if (e.key === "Tab") closeFolderMenu();
+      });
+    }
+    var h = fItem("play", "▶&nbsp; Play all") + fItem("shuffle", "🔀&nbsp; Shuffle play") +
+      '<div class="ctx-sep"></div>' +
+      fItem("reveal", "Show in Explorer") + fItem("copy", "Copy path");
+    if (!isSub) {
+      var priv = row.getAttribute("data-private") === "1";
+      if (PRIVATE_ON) h += '<div class="ctx-sep"></div>' +
+        fItem(priv ? "public" : "private", priv ? "Make public (show in Family mode)" : "Make private (hide in Family mode)");
+      h += '<div class="ctx-sep"></div>' +
+        (row.getAttribute("data-first") === "1" ? "" : fItem("up", "Move up")) +
+        (row.getAttribute("data-last") === "1" ? "" : fItem("down", "Move down")) +
+        '<div class="ctx-sep"></div>' + fItem("remove", "Remove from oTube…", "danger");
+    }
+    fmenu.innerHTML = h.replace(/(<div class="ctx-sep"><\/div>)+$/, "");
+    fmenu.hidden = false;
+    btn.classList.add("open"); btn.setAttribute("aria-expanded", "true");
+    var r = btn.getBoundingClientRect(), mw = fmenu.offsetWidth, mh = fmenu.offsetHeight;
+    var left = Math.min(r.left, window.innerWidth - mw - 8);
+    var top = r.bottom + 4;
+    if (top + mh > window.innerHeight - 8) top = Math.max(8, r.top - mh - 4);
+    fmenu.style.left = Math.max(8, left) + "px"; fmenu.style.top = top + "px";
+    var first = fmenu.querySelector("button"); if (first) first.focus();
+  }
+  function onFolderAction(e) {
+    var b = e.target.closest("[data-fact]"); if (!b || !fcur) return;
+    var act = b.getAttribute("data-fact"), c = fcur;
+    closeFolderMenu();
+    var q = "folder=" + encodeURIComponent(c.folder) + (c.sub ? "&sub=" + encodeURIComponent(c.sub) : "");
+    if (act === "play") location.href = "/folder_play?" + q;
+    else if (act === "shuffle") location.href = "/folder_play?" + q + "&shuffle=1";
+    else if (act === "copy") {
+      (navigator.clipboard ? navigator.clipboard.writeText(c.host) : Promise.reject())
+        .then(function () { note("Path copied"); }, function () { window.prompt("Copy this path:", c.host); });
+    } else if (act === "reveal") {
+      fetch(HELPER + "reveal", { method: "POST", body: c.host })
+        .then(function (r) { if (!r.ok) throw new Error(); })
+        .catch(function () {
+          if (navigator.clipboard) navigator.clipboard.writeText(c.host);
+          note("Helper not running (start oTube from its desktop icon). Path copied to clipboard.");
+        });
+    } else if (act === "private" || act === "public") {
+      postForm("/folder_private", { folder_path: c.folder, private: act === "private" ? "1" : "0" })
+        .then(function () { location.reload(); });
+    } else if (act === "up" || act === "down") {
+      postForm("/folder_move", { folder_path: c.folder, dir: act }).then(function () { location.reload(); });
+    } else if (act === "remove") {
+      if (!window.confirm('Remove "' + c.name + '" from oTube?\n\nThe folder and its videos stay on disk; it just won\'t be listed here.')) return;
+      var fd = new FormData(); fd.append("folder_path", c.folder);
+      fetch("/remove_folder", { method: "POST", body: fd }).then(function () {
+        var u = new URL(location.href);
+        if (u.searchParams.get("folder") === c.folder) location.href = "/"; else location.reload();
+      });
+    }
+  }
   document.addEventListener("click", function (e) {
-    var t = e.target.closest(".priv-toggle");
-    if (!t) return;
-    e.preventDefault();
-    postForm("/folder_private", { folder_path: t.getAttribute("data-folder"), private: t.getAttribute("data-private") })
-      .then(function () { location.reload(); });
+    var btn = e.target.closest(".row-more");
+    if (btn) {
+      e.preventDefault(); e.stopPropagation();
+      if (fmenu && !fmenu.hidden && fcur && fcur.btn === btn) closeFolderMenu(); else openFolderMenu(btn);
+      return;
+    }
+    if (fmenu && !fmenu.hidden && !fmenu.contains(e.target)) closeFolderMenu();
   });
+  window.addEventListener("resize", closeFolderMenu);
+  var sbar = document.getElementById("sidebar");
+  if (sbar) sbar.addEventListener("scroll", closeFolderMenu);
   var pinBtn = document.getElementById("pin-btn");
   if (pinBtn) {
     pinBtn.addEventListener("click", function () {

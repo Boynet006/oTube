@@ -936,6 +936,44 @@ PIN_MAX_TRIES, PIN_LOCKOUT_SECS = 5, 30
 _pin_fails: dict[str, list] = {}  # client ip -> [failures, locked_until]
 
 
+@app.template_filter("host_path")
+def host_path_filter(folder: str) -> str:
+    """Configured folder -> its real path on the PC (for Copy path / Show in Explorer)."""
+    return to_host(to_local(folder))
+
+
+@app.route("/folder_play")
+def folder_play():
+    """Play all / Shuffle play for a folder (or subfolder): jump to its first
+    (or a random) video; Up next continues through the same folder."""
+    folder = request.args.get("folder", "")
+    sub = request.args.get("sub", "").strip("/")
+    vids = [v for v in visible(scan()) if v["folder"] == folder and
+            (not sub or v["subdir"] == sub or v["subdir"].startswith(sub + "/"))]
+    if not vids:
+        return redirect(url_for("index", folder=folder))
+    if request.args.get("shuffle"):
+        pick = random.choice(vids)
+    else:
+        pick = min(vids, key=lambda v: (v["subdir"].lower(), v["title"].lower()))
+    return redirect(url_for("watch", vid=pick["id"]))
+
+
+@app.route("/folder_move", methods=["POST"])
+def folder_move():
+    """Reorder the folder list (sidebar + chips)."""
+    folder, d = request.form.get("folder_path", ""), request.form.get("dir", "")
+    cfg = load_config()
+    fl = cfg["video_folders"]
+    if folder in fl:
+        i = fl.index(folder)
+        j = i - 1 if d == "up" else i + 1
+        if 0 <= j < len(fl):
+            fl[i], fl[j] = fl[j], fl[i]
+            save_config(cfg)
+    return {"ok": True}
+
+
 @app.route("/mode", methods=["POST"])
 def set_mode():
     """Switch Family/Private mode for this browser session."""

@@ -1,6 +1,6 @@
 # oTube helper: lets the app (running in Docker) do "Show in folder" and
 # "Open in player" on this PC. Listens on 127.0.0.1 only, and only ever opens
-# Explorer at an existing file or opens an existing *video* file.
+# Explorer at an existing file/folder or opens an existing *video* file.
 $ErrorActionPreference = 'Stop'
 $port = 8701
 $videoExts = '.mp4','.m4v','.webm','.mov','.ogv','.ogg','.mkv','.avi','.ts','.mts','.m2ts','.m2t',
@@ -21,9 +21,13 @@ while ($listener.IsListening) {
         else {
             $reader = New-Object System.IO.StreamReader($req.InputStream, [System.Text.Encoding]::UTF8)
             $path = $reader.ReadToEnd().Trim() -replace '/', '\'
-            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { $status = 404 }
+            if (-not (Test-Path -LiteralPath $path)) { $status = 404 }
+            elseif ($req.Url.AbsolutePath -eq '/reveal' -and (Test-Path -LiteralPath $path -PathType Container)) {
+                Start-Process explorer.exe -ArgumentList "`"$path`""          # open the folder
+            }
+            elseif (-not (Test-Path -LiteralPath $path -PathType Leaf)) { $status = 404 }
             elseif ($req.Url.AbsolutePath -eq '/reveal') {
-                Start-Process explorer.exe -ArgumentList "/select,`"$path`""
+                Start-Process explorer.exe -ArgumentList "/select,`"$path`""  # select the file
             }
             elseif ($req.Url.AbsolutePath -eq '/open' -and $videoExts -contains [IO.Path]::GetExtension($path).ToLower()) {
                 Invoke-Item -LiteralPath $path
