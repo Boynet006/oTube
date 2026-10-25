@@ -22,7 +22,10 @@
   function readJSON(k, d) { try { return JSON.parse(localStorage.getItem(k) || "") || d; } catch (e) { return d; } }
   function writeJSON(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
   var prefs = readJSON(PREF_KEY, {});
-  if (prefs.autoplay === undefined) prefs.autoplay = true;
+  var S = window.OTUBE || {};  // app-wide defaults from Settings
+  if (prefs.autoplay === undefined) prefs.autoplay = S.autoplay !== false;
+  if (prefs.theater === undefined) prefs.theater = !!S.theater;
+  if (prefs.ccOn === undefined) prefs.ccOn = !!S.captionsOn;
   function savePrefs() { writeJSON(PREF_KEY, prefs); }
 
   // ---------- icons ----------
@@ -264,7 +267,8 @@
     b.setAttribute("aria-label", video.muted ? "Unmute" : "Mute");
     b.title = (video.muted ? "Unmute" : "Mute") + " (m)";
   }
-  video.volume = typeof prefs.vol === "number" ? prefs.vol : 1;
+  video.volume = typeof prefs.vol === "number" ? prefs.vol : (S.volume != null ? S.volume / 100 : 1);
+  if (S.speed && S.speed !== 1) video.playbackRate = video.defaultPlaybackRate = S.speed;
   video.addEventListener("volumechange", function () {
     syncVol();
     prefs.vol = video.volume; savePrefs();
@@ -598,7 +602,7 @@
     var tParam = parseFloat(new URLSearchParams(location.search).get("t"));  // shared link time
     if (tParam > 0 && dur()) {
       try { video.currentTime = Math.min(tParam, dur() - 1); } catch (e) {}
-    } else if (entry && entry.t > 5 && dur() && entry.t < dur() - 10) {
+    } else if (S.resume !== false && entry && entry.t > 5 && dur() && entry.t < dur() - 10) {
       try { video.currentTime = entry.t; } catch (e) {}
       toast("Resumed at " + fmt(entry.t));
     }
@@ -627,7 +631,8 @@
     if (video.loop || !nextUrl || !prefs.autoplay) { showControls(); return; }
     upnext.querySelector("img").src = nextThumb;
     upnext.querySelector(".p-upnext__title").textContent = nextTitle;
-    var n = 5, nEl = upnext.querySelector(".p-upnext__n");
+    if (S.upnextSeconds === 0) { goNext(); return; }
+    var n = S.upnextSeconds || 5, nEl = upnext.querySelector(".p-upnext__n");
     nEl.textContent = n;
     upnext.hidden = false;
     countdown = setInterval(function () {
@@ -651,8 +656,8 @@
     }
     else if (k === "j") seekBy(-10);
     else if (k === "l") seekBy(10);
-    else if (k === "ArrowLeft") seekBy(-5);
-    else if (k === "ArrowRight") seekBy(5);
+    else if (k === "ArrowLeft") seekBy(-(S.seekStep || 5));
+    else if (k === "ArrowRight") seekBy(S.seekStep || 5);
     else if (k === "ArrowUp") volBy(0.05);
     else if (k === "ArrowDown") volBy(-0.05);
     else if (k === "m") { toggleMute(); toast(video.muted ? "Muted" : "Unmuted"); }

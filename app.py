@@ -138,6 +138,35 @@ def load_config() -> dict:
         return {"video_folders": []}
 
 
+# ---- App-wide settings (defaults for every device; stored in config.json) ----
+SETTINGS_DEFAULTS = {
+    "sort": "name",            # name | newest | size | duration | random
+    "view": "grid",            # grid | list
+    "thumbw": 300,             # card width in px (120-640)
+    "continueShelf": True,
+    "hoverPreview": True,
+    "newDays": 7,              # "New" badge for files added within N days
+    "autoplay": True,
+    "upnextSeconds": 5,        # countdown before the next video (0 = straight away)
+    "resume": True,
+    "volume": 100,             # %
+    "speed": 1,
+    "captionsOn": False,
+    "theater": False,
+    "seekStep": 5,             # seconds for ← / →
+    "miniMode": False,
+    "display": {"b": 1, "c": 1, "n": False, "w": 50},
+    "whisperModel": os.environ.get("OTUBE_WHISPER_MODEL", "large-v3-turbo"),
+}
+WHISPER_MODELS = ["tiny", "base", "small", "medium", "large-v3-turbo", "large-v3"]
+
+
+def get_settings() -> dict:
+    s = dict(SETTINGS_DEFAULTS)
+    s.update(load_config().get("settings", {}))
+    return s
+
+
 def save_config(cfg: dict) -> None:
     with open(CONFIG_PATH, "w", encoding="utf-8") as f:
         json.dump(cfg, f, indent=2)
@@ -399,6 +428,7 @@ def _warm_loop() -> None:
 
 def enrich(items: list[dict]) -> list[dict]:
     out = []
+    new_secs = float(get_settings()["newDays"]) * 86400
     for r in items:
         d = cached_duration(r["path"], r["mtime"]) or 0.0
         fname = folder_name(r["folder"])
@@ -407,7 +437,7 @@ def enrich(items: list[dict]) -> list[dict]:
                     "added": rel_time(r["mtime"]),
                     "avatar_letter": (fname[:1] or "V").upper(),
                     "avatar_hue": avatar_hue(fname),
-                    "is_new": time.time() - r["mtime"] < 7 * 86400})
+                    "is_new": time.time() - r["mtime"] < new_secs})
     return out
 
 
@@ -469,7 +499,7 @@ def index():
     videos = visible(enrich(all_items))
     folder = request.args.get("folder", "")
     sub = request.args.get("sub", "").strip("/")
-    sort = request.args.get("sort", "name")
+    sort = request.args.get("sort") or get_settings()["sort"]
     playlist = find_playlist(pls, request.args.get("playlist", ""))
     if playlist:
         # Playlist order is the user's order; skip items whose file is gone.
@@ -749,6 +779,7 @@ _job_q: "queue.Queue[str]" = queue.Queue()
 _job_lock = threading.Lock()
 _worker = None
 _model = None
+_model_name = [None]
 
 
 def _job_status(vid: str, has_auto: bool) -> dict:
@@ -791,10 +822,12 @@ def _transcribe(vid: str) -> None:
     r = get_rec(vid)
     if not r:
         raise RuntimeError("video not found")
-    if _model is None:
+    want = get_settings()["whisperModel"]
+    if _model is None or _model_name[0] != want:
         from faster_whisper import WhisperModel  # heavy import; only when first needed
-        _model = WhisperModel(WHISPER_MODEL, device="cpu", compute_type="int8",
+        _model = WhisperModel(want, device="cpu", compute_type="int8",
                               download_root=os.path.join(BASE, "models"))
+        _model_name[0] = want
     # Decode with our own ffmpeg (16 kHz mono PCM) instead of faster-whisper's PyAV
     # path: handles every container we play and avoids PyAV version breakage.
     import numpy as np
@@ -829,7 +862,7 @@ def _transcribe(vid: str) -> None:
     with open(tmp, "w", encoding="utf-8") as f:
         f.write("\n".join(lines))
     with open(os.path.join(AUTO_SUBS_DIR, vid + ".json"), "w", encoding="utf-8") as f:
-        json.dump({"lang": info.language, "model": WHISPER_MODEL, "path": r["path"]}, f)
+        json.dump({"lang": info.language, "model": _model_name[0], "path": r["path"]}, f)
     os.replace(tmp, os.path.join(AUTO_SUBS_DIR, vid + ".vtt"))
 
 
@@ -1094,6 +1127,52 @@ def compress(resp):
     resp.headers["Content-Length"] = str(len(resp.get_data()))
     resp.headers["Vary"] = "Accept-Encoding"
     return resp
+
+
+@app.context_processor
+def inject_settings():
+    return {"app_settings": get_settings()}
+
+
+@app.route("/settings")
+def settings_page():
+    return render_template("settings.html", s=get_settings(), whisper_models=WHISPER_MODELS)
+
+
+@app.route("/api/settings", methods=["GET", "POST"])
+def api_settings():
+    if request.method == "GET":
+        return get_settings()
+    data = request.get_json(silent=True) or {}
+    cfg = load_config()
+    cur = cfg.setdefault("settings", {})
+    if data.get("reset"):
+        cfg["settings"] = {}
+    else:
+        for k, v in data.items():
+            if k not in SETTINGS_DEFAULTS:
+                continue
+            d = SETTINGS_DEFAULTS[k]
+            try:  # coerce to the default's type; ignore junk
+                if isinstance(d, bool):
+                    v = bool(v)
+                elif isinstance(d, (int, float)) and not isinstance(d, bool):
+                    v = type(d)(v) if not isinstance(d, int) or float(v).is_integer() else float(v)
+                elif isinstance(d, dict):
+                    v = {kk: v.get(kk, dv) for kk, dv in d.items()} if isinstance(v, dict) else d
+                else:
+                    v = str(v)
+            except (TypeError, ValueError):
+                continue
+            if k == "sort" and v not in ("name", "newest", "size", "duration", "random"):
+                continue
+            if k == "view" and v not in ("grid", "list"):
+                continue
+            if k == "whisperModel" and v not in WHISPER_MODELS:
+                continue
+            cur[k] = v
+    save_config(cfg)
+    return {"ok": True, "settings": get_settings()}
 
 
 @app.template_filter("host_path")

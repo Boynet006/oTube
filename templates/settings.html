@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Settings — oTube</title>
+  <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <script>window.OTUBE = {{ app_settings|tojson }};</script>
+  <script>(function () { try { var d = JSON.parse(localStorage.getItem("otube.display") || "null") || (window.OTUBE || {}).display || {}, r = document.documentElement;
+    var b = d.b || 1, c = d.c || 1; r.style.setProperty("--app-b", b); r.style.setProperty("--app-c", c);
+    if (b < 1 || c != 1) r.classList.add("app-filter");
+    r.style.setProperty("--app-warm", (d.n ? (d.w == null ? 50 : d.w) / 100 * 0.45 : 0).toFixed(3)); } catch (e) {} })();</script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar__left">
+      <a class="brand" href="/">
+        <svg class="brand__mark" viewBox="0 0 28 28" width="28" height="28" aria-hidden="true"><rect width="28" height="28" rx="7" fill="#ff0033"/><circle cx="14" cy="14" r="8.2" fill="none" stroke="#fff" stroke-width="2.8"/><path d="M12 10.6v6.8l5.4-3.4z" fill="#fff" stroke="#fff" stroke-width="1.2" stroke-linejoin="round"/></svg>
+        <span class="brand__text"><span class="brand__o">o</span>Tube</span>
+      </a>
+    </div>
+    <div class="topbar__right"><a class="yt-pill" href="/">← Back to videos</a></div>
+  </header>
+
+  <main class="settings" id="settings">
+    <div class="settings__head">
+      <h1>Settings</h1>
+      <p>Defaults for the whole app, on every device. Changes save automatically and apply right away in this browser.
+         Quick choices you make elsewhere (like switching grid/list) are remembered per browser until you change the default here.</p>
+    </div>
+
+    <section class="set-card">
+      <h2>Library</h2>
+      <div class="set-row"><div><b>Default sort</b><span>How videos are ordered when you open a folder</span></div>
+        <select data-k="sort">
+          {% for v, l in [('name','Name'),('newest','Newest'),('size','Size'),('duration','Duration'),('random','Random')] %}
+          <option value="{{ v }}" {{ 'selected' if s.sort == v }}>{{ l }}</option>{% endfor %}
+        </select></div>
+      <div class="set-row"><div><b>Layout</b><span>Grid of thumbnails or a list</span></div>
+        <div class="seg" data-k="view">
+          <button type="button" data-v="grid" class="{{ 'on' if s.view == 'grid' }}">Grid</button>
+          <button type="button" data-v="list" class="{{ 'on' if s.view == 'list' }}">List</button>
+        </div></div>
+      <div class="set-row"><div><b>Thumbnail size</b><span class="set-val" data-show="thumbw">{{ s.thumbw }}px</span></div>
+        <input type="range" data-k="thumbw" min="120" max="640" step="10" value="{{ s.thumbw }}"></div>
+      <div class="set-row"><div><b>Continue watching</b><span>Shelf of half-watched videos on the home page</span></div>
+        <button type="button" class="tgl {{ 'on' if s.continueShelf }}" data-k="continueShelf" role="switch"></button></div>
+      <div class="set-row"><div><b>Hover previews</b><span>Play a muted preview when hovering a thumbnail</span></div>
+        <button type="button" class="tgl {{ 'on' if s.hoverPreview }}" data-k="hoverPreview" role="switch"></button></div>
+      <div class="set-row"><div><b>"New" badge</b><span>Mark files added within this many days</span></div>
+        <select data-k="newDays">
+          {% for v in [1, 3, 7, 14, 30] %}<option value="{{ v }}" {{ 'selected' if s.newDays == v }}>{{ v }} day{{ '' if v == 1 else 's' }}</option>{% endfor %}
+        </select></div>
+    </section>
+
+    <section class="set-card">
+      <h2>Player</h2>
+      <div class="set-row"><div><b>Autoplay next video</b><span>Play the next video when one ends</span></div>
+        <button type="button" class="tgl {{ 'on' if s.autoplay }}" data-k="autoplay" role="switch"></button></div>
+      <div class="set-row"><div><b>Up next countdown</b><span>Seconds before the next video starts</span></div>
+        <select data-k="upnextSeconds">
+          {% for v in [0, 3, 5, 10, 15] %}<option value="{{ v }}" {{ 'selected' if s.upnextSeconds == v }}>{{ 'Straight away' if v == 0 else v ~ ' seconds' }}</option>{% endfor %}
+        </select></div>
+      <div class="set-row"><div><b>Resume where I left off</b><span>Continue from the last position</span></div>
+        <button type="button" class="tgl {{ 'on' if s.resume }}" data-k="resume" role="switch"></button></div>
+      <div class="set-row"><div><b>Volume</b><span class="set-val" data-show="volume">{{ s.volume }}%</span></div>
+        <input type="range" data-k="volume" min="0" max="100" step="5" value="{{ s.volume }}"></div>
+      <div class="set-row"><div><b>Playback speed</b><span>Starting speed for every video</span></div>
+        <select data-k="speed">
+          {% for v in [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2] %}<option value="{{ v }}" {{ 'selected' if s.speed == v }}>{{ 'Normal' if v == 1 else v ~ 'x' }}</option>{% endfor %}
+        </select></div>
+      <div class="set-row"><div><b>Captions on</b><span>Turn subtitles on when a video has them</span></div>
+        <button type="button" class="tgl {{ 'on' if s.captionsOn }}" data-k="captionsOn" role="switch"></button></div>
+      <div class="set-row"><div><b>Theater mode</b><span>Open videos in the wide layout</span></div>
+        <button type="button" class="tgl {{ 'on' if s.theater }}" data-k="theater" role="switch"></button></div>
+      <div class="set-row"><div><b>Arrow-key seek</b><span>Seconds to skip with ← / →</span></div>
+        <select data-k="seekStep">
+          {% for v in [3, 5, 10, 15, 30] %}<option value="{{ v }}" {{ 'selected' if s.seekStep == v }}>{{ v }} seconds</option>{% endfor %}
+        </select></div>
+      <div class="set-row"><div><b>Mini player mode</b><span>Play videos in a floating player instead of opening them</span></div>
+        <button type="button" class="tgl {{ 'on' if s.miniMode }}" data-k="miniMode" role="switch"></button></div>
+    </section>
+
+    <section class="set-card">
+      <h2>Display</h2>
+      <div class="set-row"><div><b>App brightness</b><span class="set-val" data-show="display.b">{{ (s.display.b * 100)|round|int }}%</span></div>
+        <input type="range" data-k="display.b" data-scale="100" min="20" max="100" step="1" value="{{ (s.display.b * 100)|round|int }}"></div>
+      <div class="set-row"><div><b>Contrast</b><span class="set-val" data-show="display.c">{{ (s.display.c * 100)|round|int }}%</span></div>
+        <input type="range" data-k="display.c" data-scale="100" min="70" max="140" step="1" value="{{ (s.display.c * 100)|round|int }}"></div>
+      <div class="set-row"><div><b>Night light</b><span>Warm, low-blue tint</span></div>
+        <button type="button" class="tgl {{ 'on' if s.display.n }}" data-k="display.n" role="switch"></button></div>
+      <div class="set-row"><div><b>Warmth</b><span class="set-val" data-show="display.w">{{ s.display.w }}%</span></div>
+        <input type="range" data-k="display.w" min="0" max="100" step="1" value="{{ s.display.w }}"></div>
+    </section>
+
+    <section class="set-card">
+      <h2>Captions (AI)</h2>
+      <div class="set-row"><div><b>Speech-to-text model</b><span>Bigger is more accurate but slower; downloads on first use</span></div>
+        <select data-k="whisperModel">
+          {% for m in whisper_models %}<option value="{{ m }}" {{ 'selected' if s.whisperModel == m }}>{{ m }}{{ ' (recommended)' if m == 'large-v3-turbo' }}</option>{% endfor %}
+        </select></div>
+    </section>
+
+    <div class="settings__foot">
+      <button type="button" class="pin-btn" id="set-reset">Reset all to defaults</button>
+    </div>
+  </main>
+
+  <script src="{{ url_for('static', filename='script.js') }}"></script>
+  <script>
+  (function () {
+    "use strict";
+    var root = document.getElementById("settings"), S = window.OTUBE;
+    // per-browser overrides that each setting replaces when you change it here
+    var LOCAL = {
+      view: ["kidtube.view"], thumbw: ["kidtube.thumbw"], miniMode: ["otube.miniMode"], display: ["otube.display"],
+      autoplay: ["otube.player:autoplay"], volume: ["otube.player:vol"], theater: ["otube.player:theater"],
+      captionsOn: ["otube.player:ccOn"]
+    };
+    function dropLocal(key) {
+      (LOCAL[key] || []).forEach(function (k) {
+        try {
+          var parts = k.split(":");
+          if (parts.length === 1) { localStorage.removeItem(k); return; }
+          var o = JSON.parse(localStorage.getItem(parts[0]) || "{}"); delete o[parts[1]];
+          localStorage.setItem(parts[0], JSON.stringify(o));
+        } catch (e) {}
+      });
+    }
+    var t;
+    function toast(msg) {
+      var el = document.getElementById("note-toast");
+      if (!el) { el = document.createElement("div"); el.id = "note-toast"; el.className = "note-toast"; document.body.appendChild(el); }
+      el.textContent = msg; el.classList.add("show"); clearTimeout(t); t = setTimeout(function () { el.classList.remove("show"); }, 1500);
+    }
+    function save(key, value) {
+      var body = {}, top = key.split(".")[0];
+      if (key.indexOf(".") !== -1) { S.display[key.split(".")[1]] = value; body.display = S.display; }
+      else { S[key] = value; body[key] = value; }
+      dropLocal(top);
+      if (top === "display") applyDisplay();
+      fetch("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
+        .then(function (r) { return r.json(); }).then(function (d) { toast(d.ok ? "Saved" : "Couldn't save"); });
+    }
+    function applyDisplay() {
+      var d = S.display, r = document.documentElement;
+      r.style.setProperty("--app-b", d.b); r.style.setProperty("--app-c", d.c);
+      r.classList.toggle("app-filter", d.b < 1 || d.c !== 1);
+      r.style.setProperty("--app-warm", (d.n ? d.w / 100 * 0.45 : 0).toFixed(3));
+    }
+    function num(v) { var n = Number(v); return isNaN(n) ? v : n; }
+    root.querySelectorAll("select[data-k]").forEach(function (el) {
+      el.addEventListener("change", function () { save(el.getAttribute("data-k"), num(el.value)); });
+    });
+    root.querySelectorAll("input[type=range][data-k]").forEach(function (el) {
+      var k = el.getAttribute("data-k"), scale = +el.getAttribute("data-scale") || 1;
+      var show = root.querySelector('[data-show="' + k + '"]');
+      function fill() { el.style.setProperty("--fill", ((el.value - el.min) / (el.max - el.min) * 100) + "%"); }
+      fill();
+      el.addEventListener("input", function () {
+        fill();
+        if (show) show.textContent = el.value + (k === "thumbw" ? "px" : "%");
+        if (k.indexOf("display.") === 0) { S.display[k.split(".")[1]] = el.value / scale; applyDisplay(); }
+      });
+      el.addEventListener("change", function () { save(k, el.value / scale); });
+    });
+    root.querySelectorAll(".tgl[data-k]").forEach(function (el) {
+      el.setAttribute("aria-checked", el.classList.contains("on") ? "true" : "false");
+      el.addEventListener("click", function () {
+        var on = !el.classList.contains("on");
+        el.classList.toggle("on", on); el.setAttribute("aria-checked", on ? "true" : "false");
+        save(el.getAttribute("data-k"), on);
+      });
+    });
+    root.querySelectorAll(".seg[data-k]").forEach(function (el) {
+      el.addEventListener("click", function (e) {
+        var b = e.target.closest("[data-v]"); if (!b) return;
+        el.querySelectorAll("button").forEach(function (x) { x.classList.toggle("on", x === b); });
+        save(el.getAttribute("data-k"), b.getAttribute("data-v"));
+      });
+    });
+    document.getElementById("set-reset").addEventListener("click", function () {
+      window.otubeConfirm({ title: "Reset all settings?", text: "Every setting goes back to its default.", confirm: "Reset", danger: true })
+        .then(function (ok) {
+          if (!ok) return;
+          Object.keys(LOCAL).forEach(dropLocal);
+          fetch("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reset: true }) })
+            .then(function () { location.reload(); });
+        });
+    });
+  })();
+  </script>
+</body>
+</html>

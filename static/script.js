@@ -185,7 +185,7 @@
     }
     var saved;
     try { saved = localStorage.getItem(SIZE_KEY); } catch (e) {}
-    applySize(saved || 300);
+    applySize(saved || (window.OTUBE || {}).thumbw || 300);
     sizeSlider.addEventListener("input", function () { applySize(sizeSlider.value); });
   }
 
@@ -202,7 +202,7 @@
     }
     var savedView;
     try { savedView = localStorage.getItem(VIEW_KEY); } catch (e) {}
-    applyView(savedView);
+    applyView(savedView || (window.OTUBE || {}).view);
     viewCtl.addEventListener("click", function (e) {
       var b = e.target.closest("button[data-view]");
       if (b) applyView(b.getAttribute("data-view"));
@@ -313,7 +313,7 @@
     // --- "Continue watching" shelf (from local progress, most-recent first) ---
     var shelf = document.getElementById("continue-shelf");
     var shelfRow = document.getElementById("continue-row");
-    if (shelf && shelfRow) {
+    if (shelf && shelfRow && (window.OTUBE || {}).continueShelf !== false) {
       var resume = [];
       grid.querySelectorAll(".card").forEach(function (c) {
         var id = c.getAttribute("data-id"), e = prog[id];
@@ -347,7 +347,7 @@
     }
 
     // --- Hover-to-play preview (YouTube-style), native formats only ---
-    grid.querySelectorAll('.card[data-native="1"]').forEach(function (card) {
+    if ((window.OTUBE || {}).hoverPreview !== false) grid.querySelectorAll('.card[data-native="1"]').forEach(function (card) {
       var thumb = card.querySelector(".thumb");
       var id = card.getAttribute("data-id");
       var timer = null, vid = null;
@@ -1157,7 +1157,8 @@
 (function () {
   "use strict";
   var KEY = "otube.display", btn = document.getElementById("display-btn");
-  var st = { b: 1, c: 1, n: false, w: 50 };
+  var st = { b: 1, c: 1, n: false, w: 50 }, defD = (window.OTUBE || {}).display || {};
+  for (var dk in defD) st[dk] = defD[dk];
   try { var saved = JSON.parse(localStorage.getItem(KEY) || "{}"); for (var k in saved) st[k] = saved[k]; } catch (e) {}
   function apply() {
     var r = document.documentElement;
@@ -1226,12 +1227,12 @@
   var toggle = document.getElementById("mini-toggle");
   if (!toggle) return;
   var MODE_KEY = "otube.miniMode", STATE_KEY = "otube.miniState", POS_KEY = "otube.miniPos";
-  function get(k, d) { try { return JSON.parse(localStorage.getItem(k)) || d; } catch (e) { return d; } }
+  function get(k, d) { try { var v = JSON.parse(localStorage.getItem(k)); return v == null ? d : v; } catch (e) { return d; } }
   function set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
   function sget(k) { try { return JSON.parse(sessionStorage.getItem(k)); } catch (e) { return null; } }
   function sset(k, v) { try { if (v == null) sessionStorage.removeItem(k); else sessionStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
 
-  var on = !!get(MODE_KEY, false);
+  var on = !!get(MODE_KEY, !!(window.OTUBE || {}).miniMode);
   function syncToggle() {
     toggle.classList.toggle("on", on);
     toggle.setAttribute("aria-pressed", on ? "true" : "false");
