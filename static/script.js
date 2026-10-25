@@ -566,23 +566,11 @@
   }
   function openFolderMenu(btn) {
     var row = btn.closest(".nav-item");
+    if (row.hasAttribute("data-pid")) { openPlaylistMenu(btn, row); return; }
     var isSub = row.classList.contains("sub");
     fcur = { btn: btn, row: row, folder: row.getAttribute("data-folder"), sub: row.getAttribute("data-sub") || "",
              host: row.getAttribute("data-host"), name: row.getAttribute("data-name") };
-    if (!fmenu) {
-      fmenu = document.createElement("div");
-      fmenu.className = "ctx-menu folder-menu"; fmenu.setAttribute("role", "menu"); fmenu.hidden = true;
-      document.body.appendChild(fmenu);
-      fmenu.addEventListener("click", onFolderAction);
-      fmenu.addEventListener("keydown", function (e) {
-        var items = [].slice.call(fmenu.querySelectorAll("button:not([disabled])"));
-        var i = items.indexOf(document.activeElement);
-        if (e.key === "ArrowDown") { e.preventDefault(); items[(i + 1) % items.length].focus(); }
-        else if (e.key === "ArrowUp") { e.preventDefault(); items[(i - 1 + items.length) % items.length].focus(); }
-        else if (e.key === "Escape") { e.preventDefault(); closeFolderMenu(); fcur.btn.focus(); }
-        else if (e.key === "Tab") closeFolderMenu();
-      });
-    }
+    ensureMenu();
     var h = fItem("play", "▶&nbsp; Play all") + fItem("shuffle", "🔀&nbsp; Shuffle play") +
       '<div class="ctx-sep"></div>' +
       fItem("reveal", "Show in Explorer") + fItem("copy", "Copy path");
@@ -595,7 +583,25 @@
         (row.getAttribute("data-last") === "1" ? "" : fItem("down", "Move down")) +
         '<div class="ctx-sep"></div>' + fItem("remove", "Remove from oTube…", "danger");
     }
-    fmenu.innerHTML = h.replace(/(<div class="ctx-sep"><\/div>)+$/, "");
+    showMenuAt(btn, h);
+  }
+  function ensureMenu() {
+    if (fmenu) return;
+    fmenu = document.createElement("div");
+    fmenu.className = "ctx-menu folder-menu"; fmenu.setAttribute("role", "menu"); fmenu.hidden = true;
+    document.body.appendChild(fmenu);
+    fmenu.addEventListener("click", onFolderAction);
+    fmenu.addEventListener("keydown", function (e) {
+      var items = [].slice.call(fmenu.querySelectorAll("button:not([disabled])"));
+      var i = items.indexOf(document.activeElement);
+      if (e.key === "ArrowDown") { e.preventDefault(); items[(i + 1) % items.length].focus(); }
+      else if (e.key === "ArrowUp") { e.preventDefault(); items[(i - 1 + items.length) % items.length].focus(); }
+      else if (e.key === "Escape") { e.preventDefault(); closeFolderMenu(); fcur.btn.focus(); }
+      else if (e.key === "Tab") closeFolderMenu();
+    });
+  }
+  function showMenuAt(btn, html) {
+    fmenu.innerHTML = html.replace(/(<div class="ctx-sep"><\/div>)+$/, "");
     fmenu.hidden = false;
     btn.classList.add("open"); btn.setAttribute("aria-expanded", "true");
     var r = btn.getBoundingClientRect(), mw = fmenu.offsetWidth, mh = fmenu.offsetHeight;
@@ -605,10 +611,23 @@
     fmenu.style.left = Math.max(8, left) + "px"; fmenu.style.top = top + "px";
     var first = fmenu.querySelector("button"); if (first) first.focus();
   }
+  function openPlaylistMenu(btn, row) {
+    ensureMenu();
+    fcur = { btn: btn, row: row, pid: row.getAttribute("data-pid"), name: row.getAttribute("data-name") };
+    var empty = row.getAttribute("data-count") === "0", liked = fcur.pid === "liked";
+    var h = (empty ? "" : fItem("pl-play", "▶&nbsp; Play all") + fItem("pl-shuffle", "🔀&nbsp; Shuffle play") +
+      '<div class="ctx-sep"></div>') +
+      (liked ? "" : fItem("pl-rename", "Rename…")) +
+      (row.getAttribute("data-first") === "1" ? "" : fItem("pl-up", "Move up")) +
+      (row.getAttribute("data-last") === "1" ? "" : fItem("pl-down", "Move down")) +
+      (liked ? "" : '<div class="ctx-sep"></div>' + fItem("pl-delete", "Delete playlist…", "danger"));
+    showMenuAt(btn, h);
+  }
   function onFolderAction(e) {
     var b = e.target.closest("[data-fact]"); if (!b || !fcur) return;
     var act = b.getAttribute("data-fact"), c = fcur;
     closeFolderMenu();
+    if (act.indexOf("pl-") === 0) { onPlaylistAction(act, c); return; }
     var q = "folder=" + encodeURIComponent(c.folder) + (c.sub ? "&sub=" + encodeURIComponent(c.sub) : "");
     if (act === "play") location.href = "/folder_play?" + q;
     else if (act === "shuffle") location.href = "/folder_play?" + q + "&shuffle=1";
@@ -645,6 +664,21 @@
     }
     if (fmenu && !fmenu.hidden && !fmenu.contains(e.target)) closeFolderMenu();
   });
+  function onPlaylistAction(act, c) {
+    var here = new URL(location.href).searchParams.get("playlist") === c.pid ||
+               new URL(location.href).searchParams.get("list") === c.pid;
+    if (act === "pl-play") location.href = "/playlist_play?pid=" + encodeURIComponent(c.pid);
+    else if (act === "pl-shuffle") location.href = "/playlist_play?pid=" + encodeURIComponent(c.pid) + "&shuffle=1";
+    else if (act === "pl-up" || act === "pl-down") {
+      plPost(c.pid, act === "pl-up" ? "listup" : "listdown").then(function () { location.reload(); });
+    } else if (act === "pl-rename") {
+      var n = window.prompt("Rename playlist:", c.name);
+      if (n && n.trim() && n.trim() !== c.name) plPost(c.pid, "rename", { name: n.trim() }).then(function () { location.reload(); });
+    } else if (act === "pl-delete") {
+      if (!window.confirm('Delete the playlist "' + c.name + '"?\n\nThe videos themselves are not touched.')) return;
+      plPost(c.pid, "delete").then(function () { if (here) location.href = "/"; else location.reload(); });
+    }
+  }
   window.addEventListener("resize", closeFolderMenu);
   var sbar = document.getElementById("sidebar");
   if (sbar) sbar.addEventListener("scroll", closeFolderMenu);

@@ -406,10 +406,13 @@ def watch(vid):
         abort(404)
     everything = unique(visible(enrich(scan())))
     playlist = find_playlist(load_playlists(), request.args.get("list", ""))
+    shuffle_seed = request.args.get("shuffle", "") if playlist else ""
     if playlist and vid in playlist["items"]:
         # Playing a playlist: the rail shows the whole list, "next" is the following item.
         by_id = {v["id"]: v for v in everything}
         items = [by_id[i] for i in playlist["items"] if i in by_id]
+        if shuffle_seed:
+            random.Random(shuffle_seed).shuffle(items)
         pos = next((n for n, v in enumerate(items) if v["id"] == vid), 0)
         upnext = items
         next_vid = items[pos + 1]["id"] if pos + 1 < len(items) else None
@@ -426,7 +429,8 @@ def watch(vid):
     cfg = load_config()
     return render_template("watch.html", video=cur, upnext=upnext, next_vid=next_vid,
                            next_item=next_item, prev_vid=prev_vid,
-                           playlist=playlist, pos=pos,
+                           playlist=playlist, pos=pos, shuffle_seed=shuffle_seed,
+                           lq=("?list=" + playlist["id"] + ("&shuffle=" + shuffle_seed if shuffle_seed else "")) if playlist else "",
                            folder_count=sum(1 for v in everything if v["folder"] == r["folder"]),
                            liked=bool(liked and vid in liked["items"]),
                            private_on=private_unlocked(), has_pin=bool(cfg.get("pin_hash")),
@@ -959,6 +963,23 @@ def folder_play():
     return redirect(url_for("watch", vid=pick["id"]))
 
 
+@app.route("/playlist_play")
+def playlist_play():
+    """Play all / Shuffle play for a playlist."""
+    pl = find_playlist(load_playlists(), request.args.get("pid", ""))
+    if not pl:
+        return redirect(url_for("index"))
+    ok = {v["id"] for v in visible(scan())}
+    items = [i for i in pl["items"] if i in ok]
+    if not items:
+        return redirect(url_for("index", playlist=pl["id"]))
+    if request.args.get("shuffle"):
+        seed = str(random.randrange(1, 10**6))
+        random.Random(seed).shuffle(items)  # same seeded order the watch page uses
+        return redirect(url_for("watch", vid=items[0], list=pl["id"], shuffle=seed))
+    return redirect(url_for("watch", vid=items[0], list=pl["id"]))
+
+
 @app.route("/folder_move", methods=["POST"])
 def folder_move():
     """Reorder the folder list (sidebar + chips)."""
@@ -1268,6 +1289,11 @@ def api_playlist_action(pid, action):
             j = i - 1 if action == "up" else i + 1
             if 0 <= j < len(items):
                 items[i], items[j] = items[j], items[i]
+    elif action in ("listup", "listdown"):
+        i = pls.index(pl)
+        j = i - 1 if action == "listup" else i + 1
+        if 0 <= j < len(pls):
+            pls[i], pls[j] = pls[j], pls[i]
     elif action == "rename":
         name = (request.form.get("name") or "").strip()[:100]
         if not name:
