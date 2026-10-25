@@ -1058,3 +1058,8 @@ body.embed { margin: 0; background: #000; overflow: hidden; }
 .embed .p.p-dragging, .embed .p.p-dragging video { cursor: grabbing; }
 /* keep the iframe receiving pointer events while it is the one dragging */
 .mini.dragging .mini__frame { pointer-events: auto; }
+
+/* mini player: the move cursor (✥) wherever it can be dragged */
+.mini__bar, .mini.dragging .mini__bar { cursor: move; }
+.embed .p video, .embed .p.p-dragging, .embed .p.p-dragging video { cursor: move; }
+.embed .p:not(.show-ui):not(.paused) video { cursor: none; }   /* still hide it while watching */
