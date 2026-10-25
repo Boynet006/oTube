@@ -1157,14 +1157,16 @@
 (function () {
   "use strict";
   var KEY = "otube.display", btn = document.getElementById("display-btn");
-  var st = { b: 1, n: false, w: 50 };
+  var st = { b: 1, c: 1, n: false, w: 50 };
   try { var saved = JSON.parse(localStorage.getItem(KEY) || "{}"); for (var k in saved) st[k] = saved[k]; } catch (e) {}
   function apply() {
     var r = document.documentElement;
-    r.style.setProperty("--app-dim", (1 - st.b).toFixed(2));
+    r.style.setProperty("--app-b", st.b);
+    r.style.setProperty("--app-c", st.c);
+    r.classList.toggle("app-filter", st.b < 1 || st.c !== 1);
     r.style.setProperty("--app-warm", (st.n ? st.w / 100 * 0.45 : 0).toFixed(3));
     try { localStorage.setItem(KEY, JSON.stringify(st)); } catch (e) {}
-    if (btn) btn.classList.toggle("on", st.b < 1 || st.n);
+    if (btn) btn.classList.toggle("on", st.b < 1 || st.n || st.c !== 1);
   }
   apply();
   if (!btn) return;
@@ -1175,6 +1177,8 @@
     '<div class="dp-head">Display</div>' +
     '<label class="dp-row"><span>Brightness</span><b class="dp-val" data-v="b"></b></label>' +
     '<input type="range" class="dp-range" data-k="b" min="20" max="100" step="1" aria-label="App brightness">' +
+    '<label class="dp-row"><span>Contrast</span><b class="dp-val" data-v="c"></b></label>' +
+    '<input type="range" class="dp-range" data-k="c" min="70" max="140" step="1" aria-label="App contrast">' +
     '<div class="dp-row dp-switch-row"><span>Night light</span>' +
     '<button type="button" class="dp-switch" role="switch" aria-label="Night light"><span></span></button></div>' +
     '<label class="dp-row dp-warm"><span>Warmth</span><b class="dp-val" data-v="w"></b></label>' +
@@ -1184,8 +1188,12 @@
     '<p class="dp-note">Dims the whole app. The video player\'s own ☀ adjusts just the video.</p>';
   btn.parentElement.appendChild(pop);
   var bR = pop.querySelector('[data-k="b"]'), wR = pop.querySelector('[data-k="w"]'), sw = pop.querySelector(".dp-switch");
+  var cR = pop.querySelector('[data-k="c"]');
+  cR.addEventListener("input", function () { st.c = cR.value / 100; apply(); sync(); });
   function sync() {
-    bR.value = Math.round(st.b * 100); wR.value = st.w;
+    bR.value = Math.round(st.b * 100); wR.value = st.w; cR.value = Math.round(st.c * 100);
+    pop.querySelector('[data-v="c"]').textContent = Math.round(st.c * 100) + "%";
+    cR.style.setProperty("--fill", ((st.c * 100 - 70) / 70 * 100) + "%");
     pop.querySelector('[data-v="b"]').textContent = Math.round(st.b * 100) + "%";
     pop.querySelector('[data-v="w"]').textContent = st.w + "%";
     sw.classList.toggle("on", st.n); sw.setAttribute("aria-checked", st.n ? "true" : "false");
@@ -1198,9 +1206,9 @@
   sw.addEventListener("click", function () { st.n = !st.n; apply(); sync(); });
   pop.querySelector(".dp-presets").addEventListener("click", function (e) {
     var p = e.target.getAttribute("data-p"); if (!p) return;
-    if (p === "normal") { st.b = 1; st.n = false; }
-    else if (p === "dim") { st.b = 0.6; st.n = false; }
-    else { st.b = 0.45; st.n = true; st.w = 70; }
+    if (p === "normal") { st.b = 1; st.c = 1; st.n = false; }
+    else if (p === "dim") { st.b = 0.6; st.c = 1.05; st.n = false; }
+    else { st.b = 0.45; st.c = 1.05; st.n = true; st.w = 70; }
     apply(); sync();
   });
   function setOpen(o) {
@@ -1275,6 +1283,23 @@
   function close() {
     frame.src = "about:blank"; dock.hidden = true; setLarge(false); state = null; sset(STATE_KEY, null);
   }
+  // drags that start on the video inside the mini player (see player.js)
+  var fdrag = null;
+  window.addEventListener("message", function (e) {
+    if (e.origin !== location.origin || !e.data || e.data.type !== "otube-drag") return;
+    if (dock.classList.contains("mini--large")) return;
+    var d = e.data;
+    if (d.phase === "start") {
+      var r = dock.getBoundingClientRect();
+      fdrag = { sx: d.x, sy: d.y, left: r.left, top: r.top, w: r.width };
+      dock.classList.add("dragging");
+    } else if (fdrag && d.phase === "move") {
+      pos = { x: fdrag.left + (d.x - fdrag.sx), y: fdrag.top + (d.y - fdrag.sy), w: fdrag.w };
+      place();
+    } else if (fdrag && d.phase === "end") {
+      fdrag = null; dock.classList.remove("dragging"); set(POS_KEY, pos);
+    }
+  });
   window.addEventListener("message", function (e) {
     if (e.origin !== location.origin || !e.data || e.data.type !== "otube-mini" || !state) return;
     var d = e.data;
@@ -1298,29 +1323,69 @@
     if (e.key === "Escape" && dock.classList.contains("mini--large")) setLarge(false);
   });
 
-  // drag the small player by its bar; position remembered
-  var pos = get(POS_KEY, null);
+  // Move (drag the bar) and resize (drag any corner); 16:9 kept, remembered.
+  // Double-click the bar to reset size and position.
+  var BAR_H = 40, MIN_W = 260;
+  var pos = get(POS_KEY, null);  // {x, y, w}
+  function maxW() { return Math.max(MIN_W, Math.min(innerWidth - 16, (innerHeight - 80 - BAR_H) * 16 / 9)); }
+  function hFor(w) { return Math.round(w * 9 / 16) + BAR_H; }
   function place() {
-    if (!pos || dock.classList.contains("mini--large")) { dock.style.left = dock.style.top = ""; return; }
-    var w = dock.offsetWidth || 400, h = dock.offsetHeight || 260;
+    if (dock.classList.contains("mini--large")) { dock.style.left = dock.style.top = dock.style.width = ""; return; }
+    if (!pos) { dock.style.left = dock.style.top = dock.style.width = ""; dock.style.right = dock.style.bottom = ""; return; }
+    var w = Math.min(Math.max(MIN_W, pos.w || dock.offsetWidth || 400), maxW()), h = hFor(w);
+    dock.style.width = w + "px";
     dock.style.left = Math.min(Math.max(8, pos.x), innerWidth - w - 8) + "px";
     dock.style.top = Math.min(Math.max(64, pos.y), innerHeight - h - 8) + "px";
     dock.style.right = dock.style.bottom = "auto";
   }
+  ["nw", "ne", "sw", "se"].forEach(function (c) {
+    var hdl = document.createElement("div");
+    hdl.className = "mini__resize mini__resize--" + c; hdl.setAttribute("data-corner", c);
+    hdl.title = "Drag to resize"; dock.appendChild(hdl);
+  });
   var bar = dock.querySelector(".mini__bar"), drag = null;
-  bar.addEventListener("pointerdown", function (e) {
-    if (e.target.closest("button") || dock.classList.contains("mini--large")) return;
+  function startDrag(e, mode) {
+    if (dock.classList.contains("mini--large")) return;
     var r = dock.getBoundingClientRect();
-    drag = { dx: e.clientX - r.left, dy: e.clientY - r.top };
-    bar.setPointerCapture(e.pointerId); dock.classList.add("dragging");
-  });
-  bar.addEventListener("pointermove", function (e) {
+    drag = { mode: mode, sx: e.clientX, sy: e.clientY, r: r, dx: e.clientX - r.left, dy: e.clientY - r.top };
+    e.currentTarget.setPointerCapture(e.pointerId);
+    dock.classList.add("dragging");
+    e.preventDefault();
+  }
+  function moveDrag(e) {
     if (!drag) return;
-    pos = { x: e.clientX - drag.dx, y: e.clientY - drag.dy }; place();
+    var r = drag.r;
+    if (drag.mode === "move") {
+      pos = { x: e.clientX - drag.dx, y: e.clientY - drag.dy, w: r.width };
+    } else {
+      var c = drag.mode, west = c.indexOf("w") !== -1, north = c.indexOf("n") !== -1;
+      // width follows the horizontal drag (or the vertical one, whichever grows more)
+      var dw = (e.clientX - drag.sx) * (west ? -1 : 1);
+      var dh = (e.clientY - drag.sy) * (north ? -1 : 1) * 16 / 9;
+      var w = Math.round(Math.min(Math.max(MIN_W, r.width + Math.max(dw, dh)), maxW()));
+      var h = hFor(w);
+      pos = { w: w, x: west ? r.right - w : r.left, y: north ? r.bottom - h : r.top };
+    }
+    place();
+  }
+  function endDrag() { if (drag) { drag = null; dock.classList.remove("dragging"); set(POS_KEY, pos); } }
+  bar.addEventListener("pointerdown", function (e) { if (!e.target.closest("button")) startDrag(e, "move"); });
+  bar.addEventListener("pointermove", moveDrag);
+  bar.addEventListener("pointerup", endDrag);
+  bar.addEventListener("pointercancel", endDrag);
+  bar.addEventListener("dblclick", function (e) {
+    if (e.target.closest("button") || dock.classList.contains("mini--large")) return;
+    pos = null; set(POS_KEY, null); place();
   });
-  bar.addEventListener("pointerup", function () { if (drag) { drag = null; dock.classList.remove("dragging"); set(POS_KEY, pos); } });
+  dock.querySelectorAll(".mini__resize").forEach(function (h) {
+    h.addEventListener("pointerdown", function (e) { startDrag(e, h.getAttribute("data-corner")); });
+    h.addEventListener("pointermove", moveDrag);
+    h.addEventListener("pointerup", endDrag);
+    h.addEventListener("pointercancel", endDrag);
+  });
   window.addEventListener("resize", place);
   new MutationObserver(place).observe(dock, { attributes: true, attributeFilter: ["class", "hidden"] });
+  place();
 
   // intercept video links while the mode is on (plain left-clicks only)
   document.addEventListener("click", function (e) {

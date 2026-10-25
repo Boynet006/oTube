@@ -23,7 +23,18 @@ from flask import (Flask, Response, abort, redirect, render_template, request,
 from werkzeug.security import check_password_hash, generate_password_hash
 
 app = Flask(__name__)
-app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 300  # static css/js
+app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 31536000  # static css/js: cached, but URLs are versioned
+
+
+@app.url_defaults
+def static_version(endpoint, values):
+    """Add ?v=<file mtime> to static URLs, so browsers cache them for a long time
+    yet pick up a new version immediately after it changes."""
+    if endpoint == "static" and "filename" in values:
+        try:
+            values["v"] = int(os.path.getmtime(os.path.join(app.static_folder, values["filename"])))
+        except OSError:
+            pass
 
 BASE = os.environ.get("OTUBE_DATA") or os.path.dirname(os.path.abspath(__file__))
 os.makedirs(BASE, exist_ok=True)

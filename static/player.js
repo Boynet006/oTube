@@ -153,7 +153,9 @@
   // Click toggles play; double-click toggles fullscreen (click is delayed so a
   // double-click doesn't also pause/play).
   var clickTimer = null;
+  var suppressClick = false;  // set after the mini player was dragged by the video
   video.addEventListener("click", function () {
+    if (suppressClick) { suppressClick = false; return; }
     if (clickTimer) return;
     clickTimer = setTimeout(function () {
       clickTimer = null;
@@ -712,6 +714,41 @@
       if (e.origin !== location.origin || !e.data || e.data.type !== "otube-cmd") return;
       if (e.data.cmd === "toggle") togglePlay();
     });
+
+    // Drag the mini player from anywhere on the video (or empty control-bar
+    // space): after a few pixels of movement we tell the parent page, which
+    // moves the dock. Screen coordinates are the same in both frames.
+    var dg = null;
+    var sendDrag = function (phase, e) {
+      window.parent.postMessage({ type: "otube-drag", phase: phase, x: e.screenX, y: e.screenY }, location.origin);
+    };
+    wrap.addEventListener("pointerdown", function (e) {
+      if (e.button !== 0 || e.target.closest("button, input, .p-scrub, .p-menu, .p-upnext")) return;
+      dg = { x: e.screenX, y: e.screenY, id: e.pointerId, on: false };
+    });
+    wrap.addEventListener("pointermove", function (e) {
+      if (!dg) return;
+      if (!dg.on) {
+        if (Math.abs(e.screenX - dg.x) + Math.abs(e.screenY - dg.y) < 6) return;
+        dg.on = true;
+        try { wrap.setPointerCapture(dg.id); } catch (err) {}
+        wrap.classList.add("p-dragging");
+        sendDrag("start", { screenX: dg.x, screenY: dg.y });
+      }
+      sendDrag("move", e);
+    });
+    var stopDrag = function (e) {
+      if (!dg) return;
+      if (dg.on) {
+        sendDrag("end", e);
+        suppressClick = true;
+        setTimeout(function () { suppressClick = false; }, 300);
+        wrap.classList.remove("p-dragging");
+      }
+      dg = null;
+    };
+    wrap.addEventListener("pointerup", stopDrag);
+    wrap.addEventListener("pointercancel", stopDrag);
   }
   syncPlay(); syncTime();
 })();

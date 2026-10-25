@@ -942,15 +942,20 @@ a.shuffle-btn { text-decoration: none; }
 .chip-more:hover, .chip-more.open { background: rgba(255,255,255,.15); }
 @media (hover: none) { .chip-more { display: grid !important; } .chip-wrap .chip__n { visibility: hidden; } }
 
-/* ===== App-wide dimmer + night light (driven by --app-dim / --app-warm) ===== */
-html::after, html::before {
-  content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 2147483646;
+/* ===== App-wide dimmer + night light (driven by --app-b / --app-c / --app-warm) ===== */
+/* Brightness/contrast are a real filter on the root element (not a black
+   overlay): every pixel is scaled evenly, so HDR displays don't crush shadows,
+   and HDR video goes through the same path so it dims consistently.
+   (filter on the root doesn't break position:fixed.) Only set when in use. */
+html.app-filter { filter: brightness(var(--app-b, 1)) contrast(var(--app-c, 1)); }
+html::before {
+  content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 2147483645;
+  background: rgb(255,138,40); mix-blend-mode: multiply; opacity: var(--app-warm, 0);
 }
-html::after { background: rgba(0,0,0,var(--app-dim, 0)); }
-html::before { z-index: 2147483645; background: rgb(255,138,40); mix-blend-mode: multiply; opacity: var(--app-warm, 0); }
-html.embed::after, html.embed::before { display: none; }   /* the parent page already covers the mini player */
-/* fullscreen video leaves the page's layers behind, so carry the dimmer along */
-.p.fs::after { content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 60; background: rgba(0,0,0,var(--app-dim, 0)); }
+html.embed::before { display: none; }          /* the parent page already covers the mini player */
+html.embed.app-filter { filter: none; }
+/* fullscreen lives in the top layer, outside the root filter: apply it there too */
+html.app-filter .p.fs { filter: brightness(var(--app-b, 1)) contrast(var(--app-c, 1)); }
 .p.fs::before { content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 59; background: rgb(255,138,40); mix-blend-mode: multiply; opacity: var(--app-warm, 0); }
 
 .topbar__right { gap: 8px; }
@@ -1022,3 +1027,34 @@ body.embed { margin: 0; background: #000; overflow: hidden; }
 .confirm-actions { width: 100%; margin-top: 8px; }
 .cf-safe { background: #3ea6ff; color: #0f0f0f; }
 .cf-safe:hover:not(:disabled) { background: #65b8ff; }
+
+/* ---- Mini player: corner resize handles ---- */
+.mini__resize { position: absolute; width: 18px; height: 18px; z-index: 3; touch-action: none; }
+.mini__resize--nw { left: 0; top: 0; cursor: nwse-resize; }
+.mini__resize--se { right: 0; bottom: 0; cursor: nwse-resize; }
+.mini__resize--ne { right: 0; top: 0; cursor: nesw-resize; }
+.mini__resize--sw { left: 0; bottom: 0; cursor: nesw-resize; }
+.mini__resize::after {               /* small corner grip, shown on hover */
+  content: ""; position: absolute; width: 10px; height: 10px; opacity: 0; transition: opacity .15s;
+  border: 2px solid rgba(255,255,255,.75);
+}
+.mini__resize--nw::after { left: 3px; top: 3px; border-right: 0; border-bottom: 0; border-top-left-radius: 5px; }
+.mini__resize--ne::after { right: 3px; top: 3px; border-left: 0; border-bottom: 0; border-top-right-radius: 5px; }
+.mini__resize--sw::after { left: 3px; bottom: 3px; border-right: 0; border-top: 0; border-bottom-left-radius: 5px; }
+.mini__resize--se::after { right: 3px; bottom: 3px; border-left: 0; border-top: 0; border-bottom-right-radius: 5px; }
+.mini:hover .mini__resize::after, .mini.dragging .mini__resize::after { opacity: 1; }
+.mini--large .mini__resize { display: none; }
+.mini.dragging { transition: none; user-select: none; }
+.mini.dragging iframe { pointer-events: none; }
+/* the top handles sit over the bar: keep its buttons clickable */
+.mini__resize--ne { right: 0; top: 0; width: 12px; height: 12px; }
+.mini__resize--nw { width: 12px; height: 12px; }
+
+/* long names without spaces must wrap (Firefox doesn't break them otherwise) */
+.card__title, .up-title, .yt-title, .shelf-card .st, .p-upnext__title, .mini__title { overflow-wrap: anywhere; }
+
+/* mini player: dragging by the video */
+.embed .p video { cursor: grab; }
+.embed .p.p-dragging, .embed .p.p-dragging video { cursor: grabbing; }
+/* keep the iframe receiving pointer events while it is the one dragging */
+.mini.dragging .mini__frame { pointer-events: auto; }

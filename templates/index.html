@@ -8,7 +8,9 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
   <script>/* apply the app-wide display setting before first paint (no bright flash) */
   (function () { try { var d = JSON.parse(localStorage.getItem("otube.display") || "{}"), r = document.documentElement;
-    r.style.setProperty("--app-dim", (1 - (d.b || 1)).toFixed(2));
+    var b = d.b || 1, c = d.c || 1;
+    r.style.setProperty("--app-b", b); r.style.setProperty("--app-c", c);
+    if (b < 1 || c != 1) r.classList.add("app-filter");
     r.style.setProperty("--app-warm", (d.n ? (d.w == null ? 50 : d.w) / 100 * 0.45 : 0).toFixed(3)); } catch (e) {} })();</script>
 </head>
 <body>
