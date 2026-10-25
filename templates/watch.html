@@ -100,10 +100,16 @@
       {% else %}
       <div class="yt-chips" id="rail-chips" role="tablist">
         <button type="button" class="chip active" data-f="all">All</button>
+        <span class="chip-wrap" data-folder="{{ video.folder }}" data-nomove="1" data-host="{{ video.folder|host_path }}"
+              data-name="{{ video.folder_name }}" data-private="{{ '1' if video.folder in private_set else '0' }}">
         <button type="button" class="chip" data-f="folder">From {{ video.folder_name }}</button>
+        <button type="button" class="row-more chip-more" aria-label="More actions for {{ video.folder_name }}" aria-haspopup="menu" title="More actions"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M12 16.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3zm0-6a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3zm0-6a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3z"/></svg></button></span>
         {% set vtree = (folder_trees or {}).get(video.folder) %}
         {% if vtree %}{% for c in vtree.children %}
+        <span class="chip-wrap" data-folder="{{ video.folder }}" data-sub="{{ c.rel }}"
+              data-host="{{ video.folder|host_path }}/{{ c.rel }}" data-name="{{ c.name }}">
         <button type="button" class="chip chip--sf {{ 'mine' if video.subdir == c.rel or video.subdir.startswith(c.rel ~ '/') }}" data-f="sub" data-sub="{{ c.rel }}" title="{{ video.folder_name }} › {{ c.rel }}"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M10 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8z"/></svg>{{ c.name }}</button>
+        <button type="button" class="row-more chip-more" aria-label="More actions for {{ c.name }}" aria-haspopup="menu" title="More actions"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M12 16.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3zm0-6a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3zm0-6a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3z"/></svg></button></span>
         {% endfor %}{% endif %}
         <button type="button" class="chip" data-f="unwatched">Unwatched</button>
         <button type="button" class="chip" data-f="new">Recently added</button>

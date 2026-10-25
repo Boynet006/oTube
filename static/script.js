@@ -36,7 +36,7 @@
 
   // --- Chip rows: bring the active chip into view (rows scroll sideways) ---
   document.querySelectorAll(".chips .chip.active").forEach(function (c) {
-    var row = c.parentElement;
+    var row = c.closest(".chips");
     if (c.offsetLeft + c.offsetWidth > row.clientWidth) row.scrollLeft = c.offsetLeft - 24;
   });
 
@@ -565,9 +565,9 @@
     if (fcur) { fcur.btn.classList.remove("open"); fcur.btn.setAttribute("aria-expanded", "false"); }
   }
   function openFolderMenu(btn) {
-    var row = btn.closest(".nav-item");
+    var row = btn.closest(".nav-item, .chip-wrap");
     if (row.hasAttribute("data-pid")) { openPlaylistMenu(btn, row); return; }
-    var isSub = row.classList.contains("sub");
+    var isSub = !!row.getAttribute("data-sub");
     fcur = { btn: btn, row: row, folder: row.getAttribute("data-folder"), sub: row.getAttribute("data-sub") || "",
              host: row.getAttribute("data-host"), name: row.getAttribute("data-name") };
     ensureMenu();
@@ -579,8 +579,8 @@
       if (PRIVATE_ON) h += '<div class="ctx-sep"></div>' +
         fItem(priv ? "public" : "private", priv ? "Make public (show in Family mode)" : "Make private (hide in Family mode)");
       h += '<div class="ctx-sep"></div>' +
-        (row.getAttribute("data-first") === "1" ? "" : fItem("up", "Move up")) +
-        (row.getAttribute("data-last") === "1" ? "" : fItem("down", "Move down")) +
+        (row.hasAttribute("data-nomove") || row.getAttribute("data-first") === "1" ? "" : fItem("up", "Move up")) +
+        (row.hasAttribute("data-nomove") || row.getAttribute("data-last") === "1" ? "" : fItem("down", "Move down")) +
         '<div class="ctx-sep"></div>' + fItem("remove", "Remove from oTube…", "danger");
     }
     showMenuAt(btn, h);
@@ -679,6 +679,15 @@
       plPost(c.pid, "delete").then(function () { if (here) location.href = "/"; else location.reload(); });
     }
   }
+  // Right-click (or the keyboard menu key) on a folder chip opens the same menu
+  document.addEventListener("contextmenu", function (e) {
+    var w = e.target.closest(".chip-wrap");
+    if (!w) return;
+    var b = w.querySelector(".chip-more");
+    if (!b) return;
+    e.preventDefault();
+    openFolderMenu(b);
+  });
   window.addEventListener("resize", closeFolderMenu);
   var sbar = document.getElementById("sidebar");
   if (sbar) sbar.addEventListener("scroll", closeFolderMenu);
@@ -1064,6 +1073,6 @@
     var span = document.createElement("span");
     span.className = "chip__n"; span.textContent = n;
     c.appendChild(document.createTextNode(" ")); c.appendChild(span);
-    if (!n && c.getAttribute("data-f") !== "all") c.hidden = true;
+    if (!n && c.getAttribute("data-f") !== "all") (c.closest(".chip-wrap") || c).hidden = true;
   });
 })();

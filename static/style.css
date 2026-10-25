@@ -924,3 +924,20 @@ a.shuffle-btn { text-decoration: none; }
 .grid .card { content-visibility: auto; contain-intrinsic-size: auto 320px; }
 .grid.list .card { contain-intrinsic-size: auto 110px; }
 .yt-rail .up-item { content-visibility: auto; contain-intrinsic-size: auto 102px; }
+
+/* ---- ⋮ on folder chips: replaces the count on hover ---- */
+.chip-wrap { position: relative; display: inline-flex; flex-shrink: 0; }
+.chip-wrap[hidden] { display: none; }
+.chip-more {
+  position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
+  width: 26px; height: 26px; margin: 0; display: none !important; place-items: center;
+  border-radius: 50%; color: inherit;
+}
+.chip-wrap:hover .chip-more, .chip-wrap:focus-within .chip-more, .chip-more.open { display: grid !important; }
+.chip-wrap:hover .chip__n, .chip-wrap:focus-within .chip__n, .chip-wrap:has(.chip-more.open) .chip__n { visibility: hidden; }
+.chip-wrap .chip { padding-right: 34px; }           /* room for ⋮ (count sits there otherwise) */
+.chip-wrap .chip .chip__n { min-width: 16px; display: inline-block; text-align: right; }
+.chip-wrap:has(.chip.active) .chip-more { color: #0f0f0f; }
+.chip-wrap:has(.chip.active) .chip-more:hover, .chip-wrap:has(.chip.active) .chip-more.open { background: rgba(0,0,0,.12); }
+.chip-more:hover, .chip-more.open { background: rgba(255,255,255,.15); }
+@media (hover: none) { .chip-more { display: grid !important; } .chip-wrap .chip__n { visibility: hidden; } }
