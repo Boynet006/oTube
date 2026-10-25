@@ -34,6 +34,12 @@
     menuBtn.addEventListener("click", function () { sidebar.classList.toggle("hidden"); });
   }
 
+  // --- Chip rows: bring the active chip into view (rows scroll sideways) ---
+  document.querySelectorAll(".chips .chip.active").forEach(function (c) {
+    var row = c.parentElement;
+    if (c.offsetLeft + c.offsetWidth > row.clientWidth) row.scrollLeft = c.offsetLeft - 24;
+  });
+
   // --- Folder tree in the sidebar: expand/collapse, remembered per folder ---
   var TREE_KEY = "otube.tree";
   var openSet = {};

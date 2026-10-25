@@ -37,11 +37,25 @@
     {% include "_sidebar.html" %}
 
     <main class="content">
+      <div class="chips-sticky">
       <div class="chips" id="chips">
         <a class="chip {{ 'active' if not current_folder and not playlist }}" href="/{{ '?sort=' ~ sort if sort and sort!='name' else '' }}">All</a>
         {% for f in folders %}
         <a class="chip {{ 'active' if current_folder == f }}{{ ' private' if f in private_set }}" href="?folder={{ f|urlencode }}{{ '&sort=' ~ sort if sort and sort!='name' else '' }}">{{ f.rstrip('/').split('/')[-1] or f }}</a>
         {% endfor %}
+      </div>
+      {% set srt = '&sort=' ~ sort if sort and sort != 'name' else '' %}
+      {% if sub_level and (sub_level.children or current_sub) %}
+      <div class="chips chips--sub" aria-label="Subfolders">
+        {% if current_sub %}
+        <a class="chip chip--up" href="/?folder={{ current_folder|urlencode }}{% if sub_level.parent %}&sub={{ sub_level.parent|urlencode }}{% endif %}{{ srt }}" title="Up one level"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M4 12l1.41 1.41L11 7.83V20h2V7.83l5.58 5.59L20 12l-8-8-8 8z"/></svg></a>
+        {% endif %}
+        <a class="chip active" href="/?folder={{ current_folder|urlencode }}{% if current_sub %}&sub={{ current_sub|urlencode }}{% endif %}{{ srt }}">All in {{ sub_level.name }} <span class="chip__n">{{ sub_level.count }}</span></a>
+        {% for c in sub_level.children %}
+        <a class="chip" href="/?folder={{ current_folder|urlencode }}&sub={{ c.rel|urlencode }}{{ srt }}" title="{{ c.rel }}"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M10 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8z"/></svg>{{ c.name }} <span class="chip__n">{{ c.count }}</span></a>
+        {% endfor %}
+      </div>
+      {% endif %}
       </div>
 
       <section class="shelf" id="continue-shelf" hidden>

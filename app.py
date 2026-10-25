@@ -322,6 +322,20 @@ def folder_trees(items: list[dict], folders: list[str]) -> dict:
     return {f: finish(t) for f, t in trees.items()}
 
 
+def sub_level(trees: dict, folder: str, sub: str) -> dict | None:
+    """For the chip row: the node being viewed and its direct subfolders."""
+    node = trees.get(folder) if folder else None
+    if not node:
+        return None
+    for part in [p for p in sub.split("/") if p]:
+        node = next((c for c in node["children"] if c["name"] == part), None)
+        if node is None:
+            return None
+    parent = sub.rsplit("/", 1)[0] if "/" in sub else ""
+    return {"count": node["count"], "children": node["children"], "parent": parent,
+            "name": sub.rsplit("/", 1)[-1] if sub else folder_name(folder)}
+
+
 def get_rec(vid: str) -> dict | None:
     if vid in _rec_cache:
         return _rec_cache[vid]
@@ -367,7 +381,8 @@ def index():
     folders = [f for f in cfg.get("video_folders", []) if unlocked or f not in hidden]
     return render_template("index.html", videos=videos, folders=folders,
                            current_folder=folder, current_sub=sub, sort=sort,
-                           folder_trees=folder_trees(scan(), folders),
+                           folder_trees=(trees := folder_trees(scan(), folders)),
+                           sub_level=sub_level(trees, folder, sub),
                            playlists=pls, playlist=playlist,
                            private_on=unlocked, private_set=hidden, has_pin=bool(cfg.get("pin_hash")))
 
