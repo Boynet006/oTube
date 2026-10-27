@@ -1357,3 +1357,12 @@ body.embed { margin: 0; background: #000; overflow: hidden; }
 .p-vol__range.boosted { background: linear-gradient(to right, #fff 50%, #ff9f43 50%, #ff9f43 var(--fill), rgba(255,255,255,.3) var(--fill)); }
 .p-vol:hover .p-vol__range, .p-vol:focus-within .p-vol__range { width: 96px; }
 .p-btn[data-a="mute"].boosted { color: #ff9f43; }
+
+/* seek preview frame (storyboard) above the time tooltip */
+.p-scrub__frame {
+  position: absolute; bottom: 56px; left: 0; transform: translateX(-50%); pointer-events: none;
+  border: 2px solid #fff; border-radius: 8px; background-color: #000; background-repeat: no-repeat;
+  box-shadow: 0 4px 16px rgba(0,0,0,.6); opacity: 0; transition: opacity .1s;
+}
+.p-scrub:hover .p-scrub__frame:not([hidden]), .p-scrub.dragging .p-scrub__frame:not([hidden]) { opacity: 1; }
+.p-scrub__frame[hidden] { display: none; }

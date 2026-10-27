@@ -72,7 +72,7 @@
     '<div class="p-controls">' +
     '  <div class="p-scrub" role="slider" tabindex="0" aria-label="Seek">' +
     '    <div class="p-scrub__rail"><div class="p-scrub__buf"></div><div class="p-scrub__hover"></div><div class="p-scrub__fill"></div></div>' +
-    '    <div class="p-scrub__knob"></div><div class="p-scrub__tip"></div>' +
+    '    <div class="p-scrub__knob"></div><div class="p-scrub__frame" hidden></div><div class="p-scrub__tip"></div>' +
     '  </div>' +
     '  <div class="p-bar">' +
     '    <div class="p-left">' +
@@ -219,12 +219,38 @@
     var r = scrub.getBoundingClientRect();
     return Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
   }
+  // seek preview: a small frame from the storyboard sprite above the time
+  var frameEl = scrub.querySelector(".p-scrub__frame"), sb = null;
+  function loadStoryboard(tries) {
+    fetch("/storyboard/" + vid + ".json").then(function (r) { return r.json(); }).then(function (d) {
+      if (d.ready) {
+        sb = d;
+        var scale = frameEl.offsetWidth ? frameEl.offsetWidth / d.w : (wrap.offsetWidth < 560 ? 0.9 : 1.2);
+        sb.dw = Math.round(d.w * scale); sb.dh = Math.round(d.h * scale);
+        frameEl.style.width = sb.dw + "px"; frameEl.style.height = sb.dh + "px";
+        frameEl.style.backgroundImage = "url(" + d.src + ")";
+        frameEl.style.backgroundSize = (d.cols * sb.dw) + "px " + (d.rows * sb.dh) + "px";
+        new Image().src = d.src;  // warm the cache
+      } else if (tries < 40) {
+        setTimeout(function () { loadStoryboard(tries + 1); }, 3000);  // being built in the background
+      }
+    }).catch(function () {});
+  }
+  loadStoryboard(0);
   function previewAt(ratio) {
     var pct = ratio * 100;
     hoverBar.style.width = pct + "%";
     tip.textContent = fmt(ratio * dur());
     var r = scrub.getBoundingClientRect(), tw = tip.offsetWidth / 2;
-    tip.style.left = Math.min(r.width - tw, Math.max(tw, ratio * r.width)) + "px";
+    var x = Math.min(r.width - tw, Math.max(tw, ratio * r.width));
+    tip.style.left = x + "px";
+    if (sb && dur()) {
+      var i = Math.min(sb.count - 1, Math.floor(ratio * dur() / sb.interval));
+      frameEl.style.backgroundPosition = (-(i % sb.cols) * sb.dw) + "px " + (-Math.floor(i / sb.cols) * sb.dh) + "px";
+      var fw = sb.dw / 2;
+      frameEl.style.left = Math.min(r.width - fw, Math.max(fw, ratio * r.width)) + "px";
+      frameEl.hidden = false;
+    }
   }
   scrub.addEventListener("pointermove", function (e) {
     var ratio = ratioAt(e);

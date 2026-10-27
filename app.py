@@ -50,9 +50,11 @@ DUR_CACHE_PATH = os.path.join(BASE, "duration_cache.json")  # persisted path -> 
 THUMB_DIR = os.path.join(BASE, "thumbs")
 TRANS_DIR = os.path.join(BASE, "transcoded")  # cached browser-playable mp4s for mkv/avi/etc.
 AUTO_SUBS_DIR = os.path.join(BASE, "subs")  # speech-to-text captions: <vid>.vtt + <vid>.json
+STORY_DIR = os.path.join(BASE, "storyboards")  # seek-preview sprite sheets: <vid>.jpg + <vid>.json
 os.makedirs(THUMB_DIR, exist_ok=True)
 os.makedirs(TRANS_DIR, exist_ok=True)
 os.makedirs(AUTO_SUBS_DIR, exist_ok=True)
+os.makedirs(STORY_DIR, exist_ok=True)
 
 # All the video containers we recognise. Browser-native ones stream directly
 # (seekable); everything else is remuxed/transcoded to mp4 on the fly.
@@ -999,6 +1001,76 @@ def subs_status(vid):
     return _job_status(vid, os.path.exists(os.path.join(AUTO_SUBS_DIR, vid + ".vtt")))
 
 
+# ---- Seek previews ("storyboards"): one sprite sheet of small frames per video ----
+SB_W, SB_H, SB_COLS, SB_MAX = 160, 90, 10, 200
+_sb_q: "queue.Queue[str]" = queue.Queue()
+_sb_pending: set = set()
+_sb_worker = None
+
+
+def _make_storyboard(vid: str) -> None:
+    r = get_rec(vid)
+    if not r:
+        return
+    d = probe_duration(r["path"], r["mtime"])
+    if d <= 0:
+        return
+    interval = max(2, -(-int(d) // SB_MAX))          # ≤ 200 frames, ≥ 2 s apart
+    count = max(1, -(-int(d) // interval))
+    rows = -(-count // SB_COLS)
+    tmp = os.path.join(STORY_DIR, vid + ".part.jpg")
+    # keyframes only (-skip_frame nokey): fast even for hour-long videos
+    cmd = [FFMPEG, "-v", "error", "-y", "-skip_frame", "nokey", "-i", r["path"], "-an", "-sn",
+           "-vf", f"fps=1/{interval},scale={SB_W}:{SB_H}:force_original_aspect_ratio=decrease,"
+                  f"pad={SB_W}:{SB_H}:(ow-iw)/2:(oh-ih)/2,tile={SB_COLS}x{rows}",
+           "-frames:v", "1", "-q:v", "6", tmp]
+    try:
+        subprocess.run(cmd, capture_output=True, timeout=900)
+    except Exception:
+        pass
+    if os.path.exists(tmp) and os.path.getsize(tmp) > 0:
+        with open(os.path.join(STORY_DIR, vid + ".json"), "w") as f:
+            json.dump({"interval": interval, "count": count, "cols": SB_COLS, "rows": rows, "w": SB_W, "h": SB_H}, f)
+        os.replace(tmp, os.path.join(STORY_DIR, vid + ".jpg"))
+
+
+def _sb_loop() -> None:
+    while True:
+        vid = _sb_q.get()
+        try:
+            _make_storyboard(vid)
+        finally:
+            _sb_pending.discard(vid)
+
+
+@app.route("/storyboard/<vid>.json")
+def storyboard_meta(vid):
+    global _sb_worker
+    if not allowed(get_rec(vid)):
+        abort(404)
+    meta = os.path.join(STORY_DIR, vid + ".json")
+    if os.path.exists(meta) and os.path.exists(os.path.join(STORY_DIR, vid + ".jpg")):
+        with open(meta) as f:
+            return {"ready": True, "src": url_for("storyboard_img", vid=vid), **json.load(f)}
+    if vid not in _sb_pending:  # build it in the background, one video at a time
+        _sb_pending.add(vid)
+        _sb_q.put(vid)
+        if _sb_worker is None or not _sb_worker.is_alive():
+            _sb_worker = threading.Thread(target=_sb_loop, daemon=True)
+            _sb_worker.start()
+    return {"ready": False}
+
+
+@app.route("/storyboard/<vid>.jpg")
+def storyboard_img(vid):
+    if not allowed(get_rec(vid)):
+        abort(404)
+    p = os.path.join(STORY_DIR, vid + ".jpg")
+    if not os.path.exists(p):
+        abort(404)
+    return send_file(p, mimetype="image/jpeg", max_age=7 * 86400)
+
+
 def make_thumb(r: dict) -> str | None:
     """Create (once) and return the thumbnail path for a video record."""
     tp = os.path.join(THUMB_DIR, r["id"] + ".jpg")
@@ -1482,6 +1554,7 @@ def remove_folder():
 
 def _clear_caches(vid: str) -> None:
     for p in (os.path.join(THUMB_DIR, vid + ".jpg"),
+              os.path.join(STORY_DIR, vid + ".jpg"), os.path.join(STORY_DIR, vid + ".json"),
               os.path.join(TRANS_DIR, vid + ".mp4"),
               os.path.join(TRANS_DIR, vid + ".webm")):
         try:
