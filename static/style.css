@@ -1326,3 +1326,7 @@ body.embed { margin: 0; background: #000; overflow: hidden; }
   html.app-night::before { mix-blend-mode: normal; opacity: calc(var(--app-warm, 0) * .55); }
   html.embed::after { display: none; }
 }
+@supports (-moz-appearance: none) {
+  /* Firefox: contrast on pictures only (videos + thumbnails), not the whole page */
+  html.app-filter img, html.app-filter video { filter: contrast(var(--app-c, 1)); }
+}
