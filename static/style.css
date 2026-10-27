@@ -1395,3 +1395,28 @@ body.embed { margin: 0; background: #000; overflow: hidden; }
 .grid.compact .watch-tag { font-size: 9.5px; padding: 0 4px; }
 
 .mini__mark.on { color: #4ade80; }
+
+/* ---- Hover preview controls (seek bar, time, mute) ---- */
+.pv-ui { position: absolute; inset: 0; z-index: 3; pointer-events: none; }
+.pv-mute {
+  position: absolute; top: 6px; right: 6px; width: 32px; height: 32px; border-radius: 50%; border: none;
+  background: rgba(0,0,0,.6); color: #fff; display: grid; place-items: center; cursor: pointer; pointer-events: auto;
+}
+.pv-mute:hover { background: rgba(0,0,0,.85); }
+.pv-time {
+  position: absolute; right: 6px; bottom: 14px; background: rgba(0,0,0,.8); color: #fff; font-size: 11.5px; font-weight: 600;
+  padding: 1px 6px; border-radius: 4px; font-variant-numeric: tabular-nums;
+}
+.pv-bar { position: absolute; left: 0; right: 0; bottom: -6px; height: 18px; display: flex; align-items: center; cursor: pointer; pointer-events: auto; touch-action: none; }
+.pv-rail { position: relative; width: 100%; height: 3px; background: rgba(255,255,255,.35); transition: height .1s; }
+.pv-bar:hover .pv-rail, .pv-bar.dragging .pv-rail { height: 5px; }
+.pv-fill { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: var(--accent); }
+.pv-knob { position: absolute; top: 50%; left: 0; width: 12px; height: 12px; margin: -6px 0 0 -6px; border-radius: 50%; background: var(--accent); transform: scale(0); transition: transform .1s; }
+.pv-bar:hover .pv-knob, .pv-bar.dragging .pv-knob { transform: scale(1); }
+.pv-tip {
+  position: absolute; bottom: 20px; left: 0; transform: translateX(-50%); background: rgba(28,28,28,.92); color: #fff;
+  font-size: 11.5px; font-weight: 600; padding: 2px 6px; border-radius: 4px; opacity: 0; white-space: nowrap; font-variant-numeric: tabular-nums;
+}
+.pv-bar:hover .pv-tip, .pv-bar.dragging .pv-tip { opacity: 1; }
+.card.previewing .ext-badge, .card.previewing .badge { opacity: 0; }
+.card.previewing .watched { display: none; }

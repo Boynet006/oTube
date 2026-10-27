@@ -486,30 +486,92 @@
     }
 
     // --- Hover-to-play preview (YouTube-style), native formats only ---
+    // While previewing: a seek bar along the bottom (click or drag), a mute
+    // toggle, and clicking the video opens it at the preview's position.
+    var MUTE_KEY = "otube.previewMuted";
+    var SPK_ON = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0 0 14 8v8a4.47 4.47 0 0 0 2.5-4zM14 3.23v2.06a7 7 0 0 1 0 13.42v2.06A9 9 0 0 0 14 3.23z"/></svg>';
+    var SPK_OFF = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M16.5 12A4.5 4.5 0 0 0 14 8v2.18l2.45 2.45c.03-.2.05-.41.05-.63zM19 12c0 .94-.2 1.82-.54 2.64l1.51 1.51A8.8 8.8 0 0 0 21 12a9 9 0 0 0-7-8.77v2.06A7 7 0 0 1 19 12zM4.27 3 3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06a9 9 0 0 0 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4 9.91 6.09 12 8.18V4z"/></svg>';
+    function pfmt(t) { t = Math.max(0, Math.floor(t || 0)); var h = Math.floor(t / 3600), m = Math.floor(t % 3600 / 60), x = t % 60;
+      return (h ? h + ":" + (m < 10 ? "0" : "") : "") + m + ":" + (x < 10 ? "0" : "") + x; }
     if ((window.OTUBE || {}).hoverPreview !== false) grid.querySelectorAll('.card[data-native="1"]').forEach(function (card) {
       var thumb = card.querySelector(".thumb");
       var id = card.getAttribute("data-id");
-      var timer = null, vid = null;
+      var timer = null, vid = null, ui = null, dragging = false, baseHref = thumb.getAttribute("href");
+      function stop() {
+        clearTimeout(timer);
+        if (vid) { try { vid.pause(); } catch (e) {} vid.remove(); vid = null; }
+        if (ui) { ui.remove(); ui = null; }
+        card.classList.remove("previewing");
+        thumb.setAttribute("href", baseHref);
+      }
+      function build() {
+        ui = document.createElement("div");
+        ui.className = "pv-ui";
+        ui.innerHTML = '<button type="button" class="pv-mute" aria-label="Sound"></button>' +
+          '<div class="pv-bar" role="slider" aria-label="Seek preview"><div class="pv-rail"><div class="pv-fill"></div></div>' +
+          '<div class="pv-knob"></div><div class="pv-tip"></div></div><div class="pv-time"></div>';
+        thumb.appendChild(ui);
+        var bar = ui.querySelector(".pv-bar"), fill = ui.querySelector(".pv-fill"), knob = ui.querySelector(".pv-knob"),
+            tip = ui.querySelector(".pv-tip"), time = ui.querySelector(".pv-time"), mute = ui.querySelector(".pv-mute");
+        function syncMute() { mute.innerHTML = vid.muted ? SPK_OFF : SPK_ON; mute.title = vid.muted ? "Unmute" : "Mute"; }
+        syncMute();
+        mute.addEventListener("click", function (e) {
+          e.preventDefault(); e.stopPropagation();
+          vid.muted = !vid.muted; syncMute();
+          try { localStorage.setItem(MUTE_KEY, vid.muted ? "1" : "0"); } catch (err) {}
+        });
+        function sync() {
+          if (!vid || !vid.duration) return;
+          var pct = vid.currentTime / vid.duration * 100;
+          if (!dragging) { fill.style.width = pct + "%"; knob.style.left = pct + "%"; }
+          time.textContent = pfmt(vid.currentTime) + " / " + pfmt(vid.duration);
+          // clicking the video opens it right here (like YouTube)
+          var t = Math.floor(vid.currentTime);
+          thumb.setAttribute("href", baseHref + (t > 1 ? (baseHref.indexOf("?") === -1 ? "?" : "&") + "t=" + t : ""));
+        }
+        vid.addEventListener("timeupdate", sync);
+        function ratioAt(e) { var r = bar.getBoundingClientRect(); return Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)); }
+        function seek(e) {
+          var r = ratioAt(e);
+          fill.style.width = knob.style.left = r * 100 + "%";
+          if (vid.duration) { vid.currentTime = r * vid.duration; tip.textContent = pfmt(r * vid.duration); }
+          tip.style.left = r * 100 + "%";
+        }
+        bar.addEventListener("pointermove", function (e) {
+          var r = ratioAt(e);
+          tip.style.left = r * 100 + "%";
+          if (vid.duration) tip.textContent = pfmt(r * vid.duration);
+          if (dragging) seek(e);
+        });
+        bar.addEventListener("pointerdown", function (e) {
+          e.preventDefault(); e.stopPropagation();
+          dragging = true; bar.setPointerCapture(e.pointerId); bar.classList.add("dragging"); seek(e);
+        });
+        var end = function () { if (dragging) { dragging = false; bar.classList.remove("dragging"); sync(); } };
+        bar.addEventListener("pointerup", end);
+        bar.addEventListener("pointercancel", end);
+        // the bar sits inside the link: don't navigate when using it
+        ui.addEventListener("click", function (e) { if (e.target.closest(".pv-bar, .pv-mute")) { e.preventDefault(); e.stopPropagation(); } }, true);
+      }
       card.addEventListener("mouseenter", function () {
+        if (grid.classList.contains("selecting")) return;
         timer = setTimeout(function () {
           vid = document.createElement("video");
           vid.className = "preview";
-          vid.muted = true; vid.playsInline = true; vid.loop = true; vid.preload = "auto";
+          var m = "1"; try { m = localStorage.getItem(MUTE_KEY) || "1"; } catch (e) {}
+          vid.muted = m !== "0"; vid.playsInline = true; vid.loop = true; vid.preload = "auto";
           vid.src = "/stream/" + id;
           thumb.appendChild(vid);
           card.classList.add("previewing");
           vid.addEventListener("loadeddata", function () {
             try { if (vid.duration && vid.duration > 15) vid.currentTime = Math.min(10, vid.duration * 0.15); } catch (e) {}
             vid.classList.add("show");
-            vid.play().catch(function () {});
+            vid.play().catch(function () { if (vid && !vid.muted) { vid.muted = true; vid.play().catch(function () {}); } });
+            if (!ui) build();
           });
         }, 550);
       });
-      card.addEventListener("mouseleave", function () {
-        clearTimeout(timer);
-        if (vid) { try { vid.pause(); } catch (e) {} vid.remove(); vid = null; }
-        card.classList.remove("previewing");
-      });
+      card.addEventListener("mouseleave", function () { if (!dragging) stop(); });
     });
   }
 
