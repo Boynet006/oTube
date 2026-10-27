@@ -1393,3 +1393,5 @@ body.embed { margin: 0; background: #000; overflow: hidden; }
 .card[data-watch="done"]:hover .thumb__img { opacity: 1; }
 .card.previewing .watch-tag { opacity: 0; }
 .grid.compact .watch-tag { font-size: 9.5px; padding: 0 4px; }
+
+.mini__mark.on { color: #4ade80; }

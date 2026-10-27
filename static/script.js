@@ -178,7 +178,7 @@
     try { wprog = JSON.parse(localStorage.getItem("kidtube.progress") || "{}"); } catch (e) {}
     grid.querySelectorAll(".card").forEach(function (c) {
       var e = wprog[c.getAttribute("data-id")];
-      setCardWatch(c, e && e.d ? e.t / e.d : 0);
+      setCardWatch(c, e && e.w ? 1 : e && e.d ? e.t / e.d : 0);
     });
   }
   function setCardWatch(c, r) {
@@ -199,7 +199,8 @@
       if (watched) {
         var c = grid && grid.querySelector('.card[data-id="' + id + '"]'), w = document.querySelector('.watch-more[data-id="' + id + '"]');
         var d = +((c || w || {}).getAttribute ? (c || w).getAttribute("data-dur") : 0) || 1;
-        p[id] = { t: d, d: d, ts: now };
+        var old = p[id];  // "w" = marked watched; keep the resume position if there is one
+        p[id] = old && old.d ? { t: old.t, d: old.d, ts: now, w: 1 } : { t: d, d: d, ts: now, w: 1 };
       } else delete p[id];
     });
     saveProgress(p);
@@ -457,7 +458,7 @@
         var id = c.getAttribute("data-id"), e = prog[id];
         if (!e || !e.d) return;
         var ratio = e.t / e.d;
-        if (ratio <= 0.02 || ratio >= 0.97) return;
+        if (ratio <= 0.02 || ratio >= 0.97 || e.w) return;
         var img = c.querySelector(".thumb__img"), badge = c.querySelector(".badge");
         resume.push({
           id: id, ratio: ratio, ts: e.ts || 0,
@@ -973,7 +974,7 @@
       current = info;
       var mk = menu.querySelector('[data-act="mark"]');
       if (mk) {
-        var pe = loadProgress()[info.id], done = !!(pe && pe.d && pe.t / pe.d >= 0.97);
+        var pe = loadProgress()[info.id], done = !!(pe && (pe.w || (pe.d && pe.t / pe.d >= 0.97)));
         info.done = done;
         mk.textContent = done ? "Mark as unwatched" : "Mark as watched";
       }
@@ -1270,7 +1271,7 @@
     if (e && e.d && e.t / e.d > 0.02) {
       a.classList.add("partial");
       a.querySelector(".watched__bar").style.width = Math.min(100, e.t / e.d * 100).toFixed(1) + "%";
-      if (e.t / e.d >= 0.97) a.classList.add("seen");
+      if (e.t / e.d >= 0.97 || e.w) a.classList.add("seen");
     }
   });
   var chips = document.getElementById("rail-chips");
@@ -1402,6 +1403,7 @@
   dock.innerHTML =
     '<div class="mini__bar">' +
     '  <span class="mini__title"></span>' +
+    '  <button type="button" class="mini__btn mini__mark" data-m="mark" title="Mark as watched" aria-pressed="false">' + ICON("M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z") + '</button>' +
     '  <button type="button" class="mini__btn" data-m="size" title="Larger (Esc to shrink)">' + ICON("M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z") + '</button>' +
     '  <button type="button" class="mini__btn" data-m="page" title="Open full page">' + ICON("M19 19H5V5h7V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z") + '</button>' +
     '  <button type="button" class="mini__btn" data-m="close" title="Close">' + ICON("M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z") + '</button>' +
@@ -1433,6 +1435,17 @@
     setLarge(!!large);
     sset(STATE_KEY, state);
   }
+  function isDone(id) {
+    try { var e = JSON.parse(localStorage.getItem("kidtube.progress") || "{}")[id]; return !!(e && (e.w || (e.d && e.t / e.d >= 0.97))); }
+    catch (err) { return false; }
+  }
+  function syncMark() {
+    var b = dock.querySelector(".mini__mark"); if (!b || !state) return;
+    var done = isDone(state.vid);
+    b.classList.toggle("on", done);
+    b.setAttribute("aria-pressed", done ? "true" : "false");
+    b.title = done ? "Watched (click to mark as unwatched)" : "Mark as watched";
+  }
   function close() {
     frame.src = "about:blank"; dock.hidden = true; setLarge(false); state = null; sset(STATE_KEY, null);
   }
@@ -1461,13 +1474,25 @@
       try { var fu = new URL(frame.contentWindow.location.href); fu.searchParams.delete("t"); state.path = fu.pathname + fu.search; } catch (err) {}
     }
     state.t = d.t; state.title = d.title;
+    syncMark();
     titleEl.textContent = d.title; titleEl.title = d.title;
     sset(STATE_KEY, state);
   });
   dock.querySelector(".mini__bar").addEventListener("click", function (e) {
     var b = e.target.closest("[data-m]"); if (!b) return;
     var m = b.getAttribute("data-m");
-    if (m === "close") close();
+    if (m === "mark" && state) {
+      var done = isDone(state.vid);
+      if (window.otubeMarkWatched) window.otubeMarkWatched([state.vid], !done);
+      else {  // pages without the grid: just update history
+        var p = {}; try { p = JSON.parse(localStorage.getItem("kidtube.progress") || "{}"); } catch (e) {}
+        if (done) delete p[state.vid]; else p[state.vid] = { t: 1, d: 1, ts: Date.now() };
+        try { localStorage.setItem("kidtube.progress", JSON.stringify(p)); } catch (e) {}
+      }
+      syncMark();
+      flash(done ? "Marked as unwatched" : "Marked as watched");
+    }
+    else if (m === "close") close();
     else if (m === "size") setLarge(!dock.classList.contains("mini--large"));
     else if (m === "page" && state) location.href = "/watch/" + state.vid + (state.t > 1 ? "?t=" + Math.floor(state.t) : "");
   });

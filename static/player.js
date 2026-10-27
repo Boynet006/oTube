@@ -694,7 +694,8 @@
   function store(done) {
     if (!dur()) return;
     var p = readJSON(PROG_KEY, {});
-    p[vid] = { t: done ? dur() : video.currentTime, d: dur(), ts: Date.now() };
+    var old = p[vid];  // keep a manual "watched" mark while the position keeps updating
+    p[vid] = { t: done ? dur() : video.currentTime, d: dur(), ts: Date.now(), w: (old && old.w) || done || undefined };
     writeJSON(PROG_KEY, p);
   }
   video.addEventListener("timeupdate", function () {
