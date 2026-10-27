@@ -37,4 +37,8 @@ docker compose up -d *> $null
 for ($i = 0; $i -lt 60; $i++) {
     try { Invoke-WebRequest $url -UseBasicParsing -TimeoutSec 2 | Out-Null; break } catch { Start-Sleep 1 }
 }
-Start-Process $url
+# Open in Chrome (best fit for oTube); fall back to the default browser.
+$chrome = @("$env:ProgramFiles\Google\Chrome\Application\chrome.exe",
+            "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe",
+            "$env:LOCALAPPDATA\Google\Chrome\Application\chrome.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
+if ($chrome) { Start-Process $chrome $url } else { Start-Process $url }
