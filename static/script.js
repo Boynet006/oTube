@@ -177,17 +177,46 @@
     var wprog = {};
     try { wprog = JSON.parse(localStorage.getItem("kidtube.progress") || "{}"); } catch (e) {}
     grid.querySelectorAll(".card").forEach(function (c) {
-      var e = wprog[c.getAttribute("data-id")], r = e && e.d ? e.t / e.d : 0;
-      var st = r >= 0.97 ? "done" : r > 0.02 ? "partial" : "new";
-      c.setAttribute("data-watch", st);
-      var th = c.querySelector(".thumb");
-      if (th) {
-        var tag = document.createElement("span");
-        tag.className = "watch-tag watch-tag--" + st;
-        tag.textContent = st === "done" ? "✓ Watched" : st === "partial" ? "▶ " + Math.round(r * 100) + "%" : "Unwatched";
-        th.appendChild(tag);
-      }
+      var e = wprog[c.getAttribute("data-id")];
+      setCardWatch(c, e && e.d ? e.t / e.d : 0);
     });
+  }
+  function setCardWatch(c, r) {
+    var st = r >= 0.97 ? "done" : r > 0.02 ? "partial" : "new";
+    c.setAttribute("data-watch", st);
+    c.classList.toggle("partial", st === "partial");
+    var bar = c.querySelector(".watched__bar"); if (bar) bar.style.width = st === "partial" ? (r * 100).toFixed(1) + "%" : "0";
+    var th = c.querySelector(".thumb"); if (!th) return;
+    var tag = th.querySelector(".watch-tag");
+    if (!tag) { tag = document.createElement("span"); th.appendChild(tag); }
+    tag.className = "watch-tag watch-tag--" + st;
+    tag.textContent = st === "done" ? "✓ Watched" : st === "partial" ? "▶ " + Math.round(r * 100) + "%" : "Unwatched";
+  }
+  // Mark videos watched (progress = end) or unwatched (progress cleared); updates cards + Show counts
+  function markWatched(ids, watched) {
+    var p = loadProgress(), now = Date.now();
+    ids.forEach(function (id) {
+      if (watched) {
+        var c = grid && grid.querySelector('.card[data-id="' + id + '"]'), w = document.querySelector('.watch-more[data-id="' + id + '"]');
+        var d = +((c || w || {}).getAttribute ? (c || w).getAttribute("data-dur") : 0) || 1;
+        p[id] = { t: d, d: d, ts: now };
+      } else delete p[id];
+    });
+    saveProgress(p);
+    if (grid) ids.forEach(function (id) {
+      var c = grid.querySelector('.card[data-id="' + id + '"]'); if (c) setCardWatch(c, watched ? 1 : 0);
+    });
+    refreshWatchCounts();
+    if (grid) applyFilters();
+  }
+  window.otubeMarkWatched = markWatched;
+  function refreshWatchCounts() {
+    var ws = document.getElementById("watch-select");
+    if (!ws || !grid) return;
+    var wc = { "": 0, "new": 0, partial: 0, done: 0 };
+    grid.querySelectorAll(".card").forEach(function (c) { wc[""]++; wc[c.getAttribute("data-watch")]++; });
+    var names = { "": "All", "new": "Unwatched", partial: "In progress", done: "Watched" };
+    [].forEach.call(ws.options, function (o) { o.textContent = names[o.value] + " · " + wc[o.value]; });
   }
   function applyFilters() {
     var q = search ? search.value.trim().toLowerCase() : "", t = typeSel ? typeSel.value : "";
@@ -225,9 +254,7 @@
     if (typeSel.value) applyFilters();
   } else if (typeSel) typeSel.closest(".type-filter").hidden = true;
   if (watchSel && grid) {
-    var wc = { "": 0, "new": 0, partial: 0, done: 0 };
-    grid.querySelectorAll(".card").forEach(function (c) { wc[""]++; wc[c.getAttribute("data-watch")]++; });
-    [].forEach.call(watchSel.options, function (o) { o.textContent += " · " + wc[o.value]; });
+    refreshWatchCounts();
     var WKEY = "otube.watchFilter";
     try { var sw = sessionStorage.getItem(WKEY); if (sw) watchSel.value = sw; } catch (e) {}
     watchSel.addEventListener("change", function () {
@@ -533,6 +560,15 @@
     document.getElementById("sel-clear").addEventListener("click", clearSel);
     document.getElementById("sel-all").addEventListener("click", function () {
       visibleCards().forEach(function (c) { setSel(c, true); }); sync();
+    });
+    ["sel-watched", "sel-unwatched"].forEach(function (bid) {
+      var b = document.getElementById(bid);
+      if (b) b.addEventListener("click", function () {
+        var n = selected.length, w = bid === "sel-watched";
+        markWatched(selected.slice(), w);
+        note(n + " video" + (n === 1 ? "" : "s") + " marked as " + (w ? "watched" : "unwatched"));
+        clearSel();
+      });
     });
     document.getElementById("sel-save").addEventListener("click", function () {
       openSaveDialog(selected.slice(), "", function (msg) { note(msg + " (" + selected.length + " video" + (selected.length === 1 ? "" : "s") + ")"); });
@@ -935,6 +971,12 @@
     }
     function openMenu(info) {
       current = info;
+      var mk = menu.querySelector('[data-act="mark"]');
+      if (mk) {
+        var pe = loadProgress()[info.id], done = !!(pe && pe.d && pe.t / pe.d >= 0.97);
+        info.done = done;
+        mk.textContent = done ? "Mark as unwatched" : "Mark as watched";
+      }
       info.btn.classList.add("open");
       menu.hidden = false;
       var r = info.btn.getBoundingClientRect();
@@ -968,7 +1010,7 @@
     menu.addEventListener("click", function (e) {
       var b = e.target.closest("button"); if (!b || !current) return;
       var act = b.getAttribute("data-act");
-      var id = current.id, name = current.name, path = current.path;
+      var id = current.id, name = current.name, path = current.path, current_done = !!current.done;
       var card = current.card, isWatch = current.watch;
       closeMenu();
 
@@ -982,12 +1024,10 @@
         if (navigator.clipboard) navigator.clipboard.writeText(path);
       } else if (act === "reveal" || act === "open") {
         hostAction(act, id, path);
-      } else if (act === "clear") {
-        var p = loadProgress(); delete p[id]; saveProgress(p);
-        if (card) {
-          card.classList.remove("partial");
-          var bar = card.querySelector(".watched__bar"); if (bar) bar.style.width = "0";
-        }
+      } else if (act === "mark") {
+        var nowDone = !current_done;
+        markWatched([id], nowDone);
+        note(nowDone ? "Marked as watched" : "Marked as unwatched");
       } else if (act === "rename") {
         var nn = window.prompt("Rename video to:", name);
         if (nn && nn.trim() && nn.trim() !== name) {

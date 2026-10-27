@@ -186,6 +186,8 @@
         {% if playlist %}
         <button type="button" class="selbar__btn danger" id="sel-remove" data-pid="{{ playlist.id }}">Remove from playlist</button>
         {% endif %}
+        <button type="button" class="selbar__btn" id="sel-watched" title="Mark the selected videos as watched">✓ Watched</button>
+        <button type="button" class="selbar__btn" id="sel-unwatched" title="Mark the selected videos as unwatched">Unwatched</button>
         <button type="button" class="selbar__btn primary" id="sel-save">
           <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M3 6h12v2H3zm0 4h12v2H3zm0 4h8v2H3zm14 0v-3h-2v3h-3v2h3v3h2v-3h3v-2z"/></svg>
           Save to playlist</button>
@@ -224,7 +226,7 @@
     <button data-act="open">Open in player</button>
     <button data-act="copy">Copy path</button>
     <button data-act="rename">Rename…</button>
-    <button data-act="clear">Clear watch progress</button>
+    <button data-act="mark">Mark as watched</button>
     <button data-act="delete" class="danger">Delete from disk</button>
   </div>
 

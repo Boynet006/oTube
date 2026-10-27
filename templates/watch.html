@@ -88,7 +88,7 @@
           <a class="yt-pill yt-pill--hide-sm" href="/download/{{ video.id }}" title="Download the original file"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M17 18v1H6v-1h11zm-.5-6.6-.7-.7-3.8 3.7V4h-1v10.4l-3.8-3.8-.7.7 5 5 5-4.9z"/></svg><span class="yt-lbl">Download</span></a>
           <button class="yt-pill yt-round watch-more" title="More actions" aria-label="More actions"
                   data-id="{{ video.id }}" data-name="{{ video.title }}"
-                  data-path="{{ video.host_path }}" data-watch="1"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M7.5 12c0 .83-.67 1.5-1.5 1.5s-1.5-.67-1.5-1.5.67-1.5 1.5-1.5 1.5.67 1.5 1.5zm4.5-1.5c-.83 0-1.5.67-1.5 1.5s.67 1.5 1.5 1.5 1.5-.67 1.5-1.5-.67-1.5-1.5-1.5zm6 0c-.83 0-1.5.67-1.5 1.5s.67 1.5 1.5 1.5 1.5-.67 1.5-1.5-.67-1.5-1.5-1.5z"/></svg></button>
+                  data-path="{{ video.host_path }}" data-watch="1" data-dur="{{ video.dur_secs }}"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M7.5 12c0 .83-.67 1.5-1.5 1.5s-1.5-.67-1.5-1.5.67-1.5 1.5-1.5 1.5.67 1.5 1.5zm4.5-1.5c-.83 0-1.5.67-1.5 1.5s.67 1.5 1.5 1.5 1.5-.67 1.5-1.5-.67-1.5-1.5-1.5zm6 0c-.83 0-1.5.67-1.5 1.5s.67 1.5 1.5 1.5 1.5-.67 1.5-1.5-.67-1.5-1.5-1.5z"/></svg></button>
         </div>
       </div>
       <div class="yt-desc" id="yt-desc" data-id="{{ video.id }}" tabindex="0" role="button" aria-expanded="false">
@@ -159,7 +159,7 @@
     <button data-act="open">Open in player</button>
     <button data-act="copy">Copy path</button>
     <button data-act="rename">Rename…</button>
-    <button data-act="clear">Clear watch progress</button>
+    <button data-act="mark">Mark as watched</button>
     <button data-act="delete" class="danger">Delete from disk</button>
   </div>
 
