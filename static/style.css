@@ -1312,3 +1312,17 @@ body.embed { margin: 0; background: #000; overflow: hidden; }
   .p-menu { backdrop-filter: none; background: rgba(28,28,28,.98); }
   .pin-overlay { backdrop-filter: none; }
 }
+
+/* Firefox: a full-page filter / blend layer makes scrolling slow. Use plain
+   (non-blended) overlays there instead: cheap to composite. Contrast needs a
+   filter, so it doesn't apply in Firefox. */
+@supports (-moz-appearance: none) {
+  html.app-filter { filter: none; }
+  html.app-filter .p.fs { filter: none; }
+  html.app-filter::after {
+    content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 2147483646;
+    background: #000; opacity: calc(1 - var(--app-b, 1));
+  }
+  html.app-night::before { mix-blend-mode: normal; opacity: calc(var(--app-warm, 0) * .55); }
+  html.embed::after { display: none; }
+}
