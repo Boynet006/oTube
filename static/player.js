@@ -225,17 +225,24 @@
     fetch("/storyboard/" + vid + ".json").then(function (r) { return r.json(); }).then(function (d) {
       if (d.ready) {
         sb = d;
-        var scale = frameEl.offsetWidth ? frameEl.offsetWidth / d.w : (wrap.offsetWidth < 560 ? 0.9 : 1.2);
-        sb.dw = Math.round(d.w * scale); sb.dh = Math.round(d.h * scale);
-        frameEl.style.width = sb.dw + "px"; frameEl.style.height = sb.dh + "px";
+        sizeFrame();
         frameEl.style.backgroundImage = "url(" + d.src + ")";
-        frameEl.style.backgroundSize = (d.cols * sb.dw) + "px " + (d.rows * sb.dh) + "px";
         new Image().src = d.src;  // warm the cache
       } else if (tries < 40) {
         setTimeout(function () { loadStoryboard(tries + 1); }, 3000);  // being built in the background
       }
     }).catch(function () {});
   }
+  // YouTube-like size: about a quarter of the player's width (160-480px), 16:9
+  function sizeFrame() {
+    if (!sb) return;
+    sb.dw = Math.round(Math.min(480, Math.max(160, wrap.offsetWidth * 0.25)));
+    sb.dh = Math.round(sb.dw * sb.h / sb.w);
+    frameEl.style.width = sb.dw + "px"; frameEl.style.height = sb.dh + "px";
+    frameEl.style.backgroundSize = (sb.cols * sb.dw) + "px " + (sb.rows * sb.dh) + "px";
+  }
+  window.addEventListener("resize", sizeFrame);
+  document.addEventListener("fullscreenchange", function () { setTimeout(sizeFrame, 50); });
   loadStoryboard(0);
   function previewAt(ratio) {
     var pct = ratio * 100;
@@ -288,21 +295,31 @@
   }
 
   // ---------- volume (0-200%: above 100% is a Web Audio boost) ----------
-  // The <video> element tops out at 100%. Past that we route the sound through
-  // a gain stage and a limiter (so loud parts don't crackle). The audio graph is
+  // The <video> element tops out at 100%. Past that the sound goes through a
+  // soft-clipping booster (below). The audio graph is
   // created on first use, which is always a user gesture (slider/key).
-  var boost = 1, actx = null, gainNode = null, limiter = null;
+  // Soft clipping (not a limiter): normal parts get the full extra volume and only
+  // the loudest peaks are rounded off smoothly. A limiter would squash already-loud
+  // (mastered) audio straight back down, so the boost wouldn't sound louder.
+  var boost = 1, actx = null, preGain = null, shaper = null, HEAD = 4;
+  function softCurve(g) {
+    var n = 4096, c = new Float32Array(n);
+    for (var i = 0; i < n; i++) {
+      var y = g * HEAD * (i * 2 / (n - 1) - 1), a = Math.abs(y);   // input arrives scaled by 1/HEAD
+      c[i] = a <= 0.85 ? y : Math.sign(y) * (0.85 + 0.15 * Math.tanh((a - 0.85) / 0.15));
+    }
+    return c;
+  }
   function ensureAudio() {
     if (actx) { if (actx.state === "suspended") actx.resume(); return true; }
     try {
       var AC = window.AudioContext || window.webkitAudioContext;
       actx = new AC();
       var src = actx.createMediaElementSource(video);
-      gainNode = actx.createGain();
-      limiter = actx.createDynamicsCompressor();
-      limiter.threshold.value = -2; limiter.knee.value = 6; limiter.ratio.value = 20;
-      limiter.attack.value = 0.003; limiter.release.value = 0.2;
-      src.connect(gainNode); gainNode.connect(limiter); limiter.connect(actx.destination);
+      preGain = actx.createGain(); preGain.gain.value = 1 / HEAD;  // headroom so the curve sees peaks up to 4x
+      shaper = actx.createWaveShaper(); shaper.oversample = "4x"; shaper.curve = softCurve(1);
+      src.connect(preGain); preGain.connect(shaper); shaper.connect(actx.destination);
+      if (actx.state === "suspended") actx.resume();
       return true;
     } catch (e) { actx = null; return false; }
   }
@@ -312,7 +329,7 @@
     video.muted = v === 0;
     if (v > 1 && ensureAudio()) { video.volume = 1; boost = v; }
     else { video.volume = Math.min(1, v); boost = 1; }
-    if (gainNode) gainNode.gain.value = boost;
+    if (shaper) shaper.curve = softCurve(boost);
     syncVol();
     prefs.vol = v; savePrefs();
   }

@@ -1002,7 +1002,7 @@ def subs_status(vid):
 
 
 # ---- Seek previews ("storyboards"): one sprite sheet of small frames per video ----
-SB_W, SB_H, SB_COLS, SB_MAX = 160, 90, 10, 200
+SB_W, SB_H, SB_COLS, SB_MAX = 320, 180, 10, 200  # 320x180 frames: sharp when shown large
 _sb_q: "queue.Queue[str]" = queue.Queue()
 _sb_pending: set = set()
 _sb_worker = None
@@ -1051,7 +1051,9 @@ def storyboard_meta(vid):
     meta = os.path.join(STORY_DIR, vid + ".json")
     if os.path.exists(meta) and os.path.exists(os.path.join(STORY_DIR, vid + ".jpg")):
         with open(meta) as f:
-            return {"ready": True, "src": url_for("storyboard_img", vid=vid), **json.load(f)}
+            m = json.load(f)
+        if m.get("w") == SB_W:  # older, smaller sheets get rebuilt below
+            return {"ready": True, "src": url_for("storyboard_img", vid=vid, v=int(os.path.getmtime(meta))), **m}
     if vid not in _sb_pending:  # build it in the background, one video at a time
         _sb_pending.add(vid)
         _sb_q.put(vid)
