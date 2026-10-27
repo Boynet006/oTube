@@ -113,6 +113,7 @@
     r.style.setProperty("--app-b", d.b); r.style.setProperty("--app-c", d.c);
     r.classList.toggle("app-filter", d.b < 1 || d.c !== 1);
     r.style.setProperty("--app-warm", (d.n ? d.w / 100 * 0.45 : 0).toFixed(3));
+    r.classList.toggle("app-night", !!d.n);
     root.classList.toggle("night-off", !d.n);
   }
   applyDisplay();

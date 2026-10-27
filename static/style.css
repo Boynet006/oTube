@@ -948,7 +948,9 @@ a.shuffle-btn { text-decoration: none; }
    and HDR video goes through the same path so it dims consistently.
    (filter on the root doesn't break position:fixed.) Only set when in use. */
 html.app-filter { filter: brightness(var(--app-b, 1)) contrast(var(--app-c, 1)); }
-html::before {
+/* Only present while the night light is on: a full-screen blend layer makes
+   Firefox re-blend the whole page on every scroll frame, even when invisible. */
+html.app-night::before {
   content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 2147483645;
   background: rgb(255,138,40); mix-blend-mode: multiply; opacity: var(--app-warm, 0);
 }
@@ -956,7 +958,7 @@ html.embed::before { display: none; }          /* the parent page already covers
 html.embed.app-filter { filter: none; }
 /* fullscreen lives in the top layer, outside the root filter: apply it there too */
 html.app-filter .p.fs { filter: brightness(var(--app-b, 1)) contrast(var(--app-c, 1)); }
-.p.fs::before { content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 59; background: rgb(255,138,40); mix-blend-mode: multiply; opacity: var(--app-warm, 0); }
+html.app-night .p.fs::before { content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 59; background: rgb(255,138,40); mix-blend-mode: multiply; opacity: var(--app-warm, 0); }
 
 .topbar__right { gap: 8px; }
 .display-ctl { position: relative; }
@@ -1296,4 +1298,17 @@ body.embed { margin: 0; background: #000; overflow: hidden; }
 @media (max-width: 1016px) {
   .watch__side { align-self: stretch; width: auto; }
   .watch__main { align-self: stretch; }
+}
+
+/* ---- Scrolling performance ---- */
+.grid .card.later { display: none; }
+.grid-sentinel { height: 1px; }
+/* each card is self-contained: scrolling/hover never re-lays-out the rest of the page */
+.grid .card { contain: layout paint style; }
+.yt-rail .up-item { contain: layout paint style; }
+@supports (-moz-appearance: none) {
+  /* Firefox: backdrop blur behind the player pills/menu is costly; use plain translucent fills */
+  .p-pill { backdrop-filter: none; -webkit-backdrop-filter: none; background: rgba(15,15,15,.72); }
+  .p-menu { backdrop-filter: none; background: rgba(28,28,28,.98); }
+  .pin-overlay { backdrop-filter: none; }
 }

@@ -139,12 +139,39 @@
     back.addEventListener("click", function () { topbar.classList.remove("searching"); });
   }
 
+  // --- Big libraries: show cards in batches as you scroll ---
+  // Everything is in the HTML (search, select-all, shuffle still see it all), but
+  // cards past the first batch stay display:none until you scroll near the end,
+  // so the browser lays out and paints ~100 cards instead of thousands.
+  var BATCH = 96;
+  var gridEl = document.getElementById("grid");
+  if (gridEl && gridEl.children.length > BATCH * 1.5) {
+    var allCards = [].slice.call(gridEl.querySelectorAll(".card"));
+    var shownUpTo = BATCH;
+    allCards.forEach(function (c, i) { if (i >= BATCH) c.classList.add("later"); });
+    var sentinel = document.createElement("div");
+    sentinel.className = "grid-sentinel";
+    gridEl.parentNode.insertBefore(sentinel, gridEl.nextSibling);
+    var revealMore = function () {
+      var end = Math.min(allCards.length, shownUpTo + BATCH);
+      for (var i = shownUpTo; i < end; i++) allCards[i].classList.remove("later");
+      shownUpTo = end;
+      if (shownUpTo >= allCards.length) { io.disconnect(); sentinel.remove(); }
+    };
+    var io = new IntersectionObserver(function (es) {
+      if (es.some(function (e) { return e.isIntersecting; })) revealMore();
+    }, { rootMargin: "1500px 0px" });
+    io.observe(sentinel);
+    window.otubeRevealAll = function () { while (shownUpTo < allCards.length) revealMore(); };
+  }
+
   // --- Live search (home) ---
   var search = document.getElementById("search");
   var grid = document.getElementById("grid");
   var noResults = document.getElementById("no-results");
   if (search && grid) {
     search.addEventListener("input", function () {
+      if (window.otubeRevealAll) window.otubeRevealAll();
       var q = search.value.trim().toLowerCase();
       var shown = 0;
       grid.querySelectorAll(".card").forEach(function (c) {
@@ -1193,6 +1220,7 @@
     r.style.setProperty("--app-c", st.c);
     r.classList.toggle("app-filter", st.b < 1 || st.c !== 1);
     r.style.setProperty("--app-warm", (st.n ? st.w / 100 * 0.45 : 0).toFixed(3));
+    r.classList.toggle("app-night", !!st.n);
     try { localStorage.setItem(KEY, JSON.stringify(st)); } catch (e) {}
     if (btn) btn.classList.toggle("on", st.b < 1 || st.n || st.c !== 1);
   }

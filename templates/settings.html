@@ -43,7 +43,7 @@
   <script>(function () { try { var d = JSON.parse(localStorage.getItem("otube.display") || "null") || (window.OTUBE || {}).display || {}, r = document.documentElement;
     var b = d.b || 1, c = d.c || 1; r.style.setProperty("--app-b", b); r.style.setProperty("--app-c", c);
     if (b < 1 || c != 1) r.classList.add("app-filter");
-    r.style.setProperty("--app-warm", (d.n ? (d.w == null ? 50 : d.w) / 100 * 0.45 : 0).toFixed(3)); } catch (e) {} })();</script>
+    r.style.setProperty("--app-warm", (d.n ? (d.w == null ? 50 : d.w) / 100 * 0.45 : 0).toFixed(3)); if (d.n) r.classList.add("app-night"); } catch (e) {} })();</script>
 </head>
 <body class="settings-page">
   <header class="topbar">
