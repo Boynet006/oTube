@@ -1366,3 +1366,15 @@ body.embed { margin: 0; background: #000; overflow: hidden; }
 }
 .p-scrub:hover .p-scrub__frame:not([hidden]), .p-scrub.dragging .p-scrub__frame:not([hidden]) { opacity: 1; }
 .p-scrub__frame[hidden] { display: none; }
+
+/* file-type badge on thumbnails + Type filter */
+.ext-badge {
+  position: absolute; left: 6px; bottom: 6px; z-index: 2; pointer-events: none;
+  background: rgba(0,0,0,.78); color: #ddd; font-size: 10.5px; font-weight: 700; letter-spacing: .4px;
+  padding: 1px 5px; border-radius: 4px; line-height: 1.5;
+}
+.ext-badge.conv { background: rgba(255,159,67,.92); color: #1a1000; }   /* converted to play */
+.card.previewing .ext-badge { opacity: 0; }
+.grid.compact .ext-badge { font-size: 9.5px; padding: 0 4px; }
+.type-filter[hidden] { display: none; }
+@media (max-width: 640px) { .type-filter { font-size: 0; } .type-filter select { font-size: 13px; } }
