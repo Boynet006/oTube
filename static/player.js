@@ -83,7 +83,7 @@
     '     </div><div class="p-pill">' +
     '      <div class="p-vol">' +
     '        <button type="button" class="p-btn" data-a="mute" title="Mute (m)" aria-label="Mute">' + I.volHigh + '</button>' +
-    '        <input type="range" class="p-vol__range" min="0" max="1" step="0.02" aria-label="Volume">' +
+    '        <input type="range" class="p-vol__range" min="0" max="2" step="0.02" aria-label="Volume (up to 200%)">' +
     '      </div>' +
     '      <div class="p-vol p-bright">' +
     '        <button type="button" class="p-btn" data-a="bright" title="Brightness (b / Shift+B)" aria-label="Brightness">' + I.sun + '</button>' +
@@ -261,34 +261,67 @@
     syncTime(); poke();
   }
 
-  // ---------- volume ----------
+  // ---------- volume (0-200%: above 100% is a Web Audio boost) ----------
+  // The <video> element tops out at 100%. Past that we route the sound through
+  // a gain stage and a limiter (so loud parts don't crackle). The audio graph is
+  // created on first use, which is always a user gesture (slider/key).
+  var boost = 1, actx = null, gainNode = null, limiter = null;
+  function ensureAudio() {
+    if (actx) { if (actx.state === "suspended") actx.resume(); return true; }
+    try {
+      var AC = window.AudioContext || window.webkitAudioContext;
+      actx = new AC();
+      var src = actx.createMediaElementSource(video);
+      gainNode = actx.createGain();
+      limiter = actx.createDynamicsCompressor();
+      limiter.threshold.value = -2; limiter.knee.value = 6; limiter.ratio.value = 20;
+      limiter.attack.value = 0.003; limiter.release.value = 0.2;
+      src.connect(gainNode); gainNode.connect(limiter); limiter.connect(actx.destination);
+      return true;
+    } catch (e) { actx = null; return false; }
+  }
+  function level() { return video.muted ? 0 : video.volume * boost; }   // 0..2
+  function setLevel(v) {
+    v = Math.min(2, Math.max(0, Math.round(v * 100) / 100));
+    video.muted = v === 0;
+    if (v > 1 && ensureAudio()) { video.volume = 1; boost = v; }
+    else { video.volume = Math.min(1, v); boost = 1; }
+    if (gainNode) gainNode.gain.value = boost;
+    syncVol();
+    prefs.vol = v; savePrefs();
+  }
   function syncVol() {
-    var v = video.muted ? 0 : video.volume;
+    var v = level();
     volRange.value = v;
-    volRange.style.setProperty("--fill", v * 100 + "%");
+    volRange.style.setProperty("--fill", v / 2 * 100 + "%");
+    volRange.classList.toggle("boosted", v > 1);
     var b = btn("mute");
     b.innerHTML = v === 0 ? I.volMute : v < 0.5 ? I.volLow : I.volHigh;
+    b.classList.toggle("boosted", v > 1);
     b.setAttribute("aria-label", video.muted ? "Unmute" : "Mute");
-    b.title = (video.muted ? "Unmute" : "Mute") + " (m)";
+    b.title = (video.muted ? "Unmute" : "Mute") + " (m)" + (v > 1 ? " · boost " + Math.round(v * 100) + "%" : "");
+    volRange.setAttribute("aria-valuetext", Math.round(v * 100) + "%");
   }
-  video.volume = typeof prefs.vol === "number" ? prefs.vol : (S.volume != null ? S.volume / 100 : 1);
+  // a saved boost needs a user gesture to start audio, so start at 100% and let the first touch restore it
+  var startVol = typeof prefs.vol === "number" ? prefs.vol : (S.volume != null ? S.volume / 100 : 1);
+  video.volume = Math.min(1, startVol);
+  if (startVol > 1) {
+    var restore = function () { setLevel(startVol); window.removeEventListener("pointerdown", restore, true); window.removeEventListener("keydown", restore, true); };
+    window.addEventListener("pointerdown", restore, true);
+    window.addEventListener("keydown", restore, true);
+  }
   if (S.speed && S.speed !== 1) video.playbackRate = video.defaultPlaybackRate = S.speed;
-  video.addEventListener("volumechange", function () {
-    syncVol();
-    prefs.vol = video.volume; savePrefs();
-  });
-  volRange.addEventListener("input", function () {
-    video.volume = +volRange.value;
-    video.muted = video.volume === 0;
-  });
+  video.addEventListener("volumechange", syncVol);
+  volRange.addEventListener("input", function () { setLevel(+volRange.value); });
   function toggleMute() {
-    if (video.muted || video.volume === 0) { video.muted = false; if (video.volume === 0) video.volume = 0.5; }
-    else video.muted = true;
+    if (video.muted || level() === 0) { video.muted = false; if (video.volume === 0) setLevel(0.5); else syncVol(); }
+    else { video.muted = true; syncVol(); }
   }
   function volBy(d) {
     video.muted = false;
-    video.volume = Math.min(1, Math.max(0, Math.round((video.volume + d) * 100) / 100));
-    toast(Math.round(video.volume * 100) + "%");
+    setLevel((video.volume * boost) + d);
+    var v = level();
+    toast(Math.round(v * 100) + "%" + (v > 1 ? " (boost)" : ""));
   }
   syncVol();
 

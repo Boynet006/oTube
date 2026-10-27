@@ -1351,3 +1351,9 @@ body.embed { margin: 0; background: #000; overflow: hidden; }
   /* the mini player's video lives in its own frame: give the frame the contrast */
   html.app-filter .mini__frame { filter: contrast(var(--app-c, 1)); }
 }
+
+/* volume boost (above 100%): the slider's boost half turns orange */
+.p-vol__range { background: linear-gradient(to right, #fff var(--fill, 50%), rgba(255,255,255,.3) var(--fill, 50%)); }
+.p-vol__range.boosted { background: linear-gradient(to right, #fff 50%, #ff9f43 50%, #ff9f43 var(--fill), rgba(255,255,255,.3) var(--fill)); }
+.p-vol:hover .p-vol__range, .p-vol:focus-within .p-vol__range { width: 96px; }
+.p-btn[data-a="mute"].boosted { color: #ff9f43; }
