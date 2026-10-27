@@ -171,19 +171,39 @@
   var noResults = document.getElementById("no-results");
   // search text + file-type filter, applied together
   var typeSel = document.getElementById("type-select");
+  var watchSel = document.getElementById("watch-select");
+  // watched state per card, from this browser's watch history
+  if (grid) {
+    var wprog = {};
+    try { wprog = JSON.parse(localStorage.getItem("kidtube.progress") || "{}"); } catch (e) {}
+    grid.querySelectorAll(".card").forEach(function (c) {
+      var e = wprog[c.getAttribute("data-id")], r = e && e.d ? e.t / e.d : 0;
+      var st = r >= 0.97 ? "done" : r > 0.02 ? "partial" : "new";
+      c.setAttribute("data-watch", st);
+      var th = c.querySelector(".thumb");
+      if (th) {
+        var tag = document.createElement("span");
+        tag.className = "watch-tag watch-tag--" + st;
+        tag.textContent = st === "done" ? "✓ Watched" : st === "partial" ? "▶ " + Math.round(r * 100) + "%" : "Unwatched";
+        th.appendChild(tag);
+      }
+    });
+  }
   function applyFilters() {
     var q = search ? search.value.trim().toLowerCase() : "", t = typeSel ? typeSel.value : "";
-    if ((q || t) && window.otubeRevealAll) window.otubeRevealAll();
+    var w = watchSel ? watchSel.value : "";
+    if ((q || t || w) && window.otubeRevealAll) window.otubeRevealAll();
     var shown = 0;
     grid.querySelectorAll(".card").forEach(function (c) {
       var match = (!q || (c.getAttribute("data-title") || "").indexOf(q) !== -1) &&
-                  (!t || c.getAttribute("data-ext") === t);
+                  (!t || c.getAttribute("data-ext") === t) &&
+                  (!w || c.getAttribute("data-watch") === w);
       c.style.display = match ? "" : "none";
       if (match) shown++;
     });
     if (noResults) noResults.hidden = shown !== 0;
     var cnt = document.querySelector(".crumb .count");
-    if (cnt) cnt.textContent = (q || t) ? shown + " of " + grid.querySelectorAll(".card").length : grid.querySelectorAll(".card").length;
+    if (cnt) cnt.textContent = (q || t || w) ? shown + " of " + grid.querySelectorAll(".card").length : grid.querySelectorAll(".card").length;
   }
   if (typeSel && grid) {
     // options = the formats actually in this view, most common first, with counts
@@ -204,6 +224,18 @@
     });
     if (typeSel.value) applyFilters();
   } else if (typeSel) typeSel.closest(".type-filter").hidden = true;
+  if (watchSel && grid) {
+    var wc = { "": 0, "new": 0, partial: 0, done: 0 };
+    grid.querySelectorAll(".card").forEach(function (c) { wc[""]++; wc[c.getAttribute("data-watch")]++; });
+    [].forEach.call(watchSel.options, function (o) { o.textContent += " · " + wc[o.value]; });
+    var WKEY = "otube.watchFilter";
+    try { var sw = sessionStorage.getItem(WKEY); if (sw) watchSel.value = sw; } catch (e) {}
+    watchSel.addEventListener("change", function () {
+      try { sessionStorage.setItem(WKEY, watchSel.value); } catch (e) {}
+      applyFilters();
+    });
+    if (watchSel.value) applyFilters();
+  }
   if (search && grid) {
     search.addEventListener("input", applyFilters);
     // Arriving from the watch page's search box (/?q=...): prefill + filter.

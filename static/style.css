@@ -1378,3 +1378,18 @@ body.embed { margin: 0; background: #000; overflow: hidden; }
 .grid.compact .ext-badge { font-size: 9.5px; padding: 0 4px; }
 .type-filter[hidden] { display: none; }
 @media (max-width: 640px) { .type-filter { font-size: 0; } .type-filter select { font-size: 13px; } }
+
+/* watched-state tag on thumbnails (top-right) */
+.watch-tag {
+  position: absolute; top: 6px; right: 6px; z-index: 2; pointer-events: none;
+  font-size: 10.5px; font-weight: 700; padding: 1px 6px; border-radius: 4px; line-height: 1.5;
+  background: rgba(0,0,0,.78); color: #fff;
+}
+.watch-tag--done { color: #4ade80; }
+.watch-tag--partial { color: #ff8aa0; }
+.watch-tag--new { color: #9fd0ff; }
+.watch-tag--new::before { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #3ea6ff; margin-right: 4px; vertical-align: 1px; }
+.card[data-watch="done"] .thumb__img { opacity: .55; }
+.card[data-watch="done"]:hover .thumb__img { opacity: 1; }
+.card.previewing .watch-tag { opacity: 0; }
+.grid.compact .watch-tag { font-size: 9.5px; padding: 0 4px; }
