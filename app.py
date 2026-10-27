@@ -620,6 +620,102 @@ def _live_stream(r: dict) -> Response:
     return Response(generate(), mimetype="video/mp4")
 
 
+_codec_cache: dict[str, tuple] = {}           # vid -> (video codec, audio codec)
+_convert_locks: dict[str, threading.Lock] = {}
+_convert_locks_guard = threading.Lock()
+
+
+def plan_conversion(r: dict):
+    """(cache path, ffmpeg args, container, quick?) for a non-native video.
+    quick = only repackaged (no re-encode of the picture), takes seconds."""
+    vid = r["id"]
+    if vid not in _codec_cache:
+        _codec_cache[vid] = probe_codecs(r["path"])
+    v, a = _codec_cache[vid]
+    if v == "h264":
+        # Already H.264 -> remux to mp4 (copy video, AAC audio). Fast.
+        ext, args, quick = "mp4", ["-c:v", "copy", "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart"], True
+    elif v in ("vp9", "vp8", "av1"):
+        # WebM-native codecs -> remux to WebM (copy, no quality loss).
+        aargs = ["-c:a", "copy"] if a in ("opus", "vorbis") else ["-c:a", "libopus"]
+        ext, args, quick = "webm", ["-c:v", "copy"] + aargs, True
+    else:
+        # Anything else (mpeg2/vc1/wmv/hevc...) -> transcode to H.264/mp4 once.
+        ext, args, quick = "mp4", ["-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+                                   "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart"], False
+    return os.path.join(TRANS_DIR, vid + "." + ext), args, ext, quick
+
+
+def cached_copy(r: dict) -> str | None:
+    for ext in ("mp4", "webm"):
+        p = os.path.join(TRANS_DIR, r["id"] + "." + ext)
+        if os.path.exists(p) and os.path.getsize(p) > 0:
+            return p
+    return None
+
+
+def convert_to_cache(r: dict) -> str | None:
+    """Build (once) the browser-playable copy; safe to call from several threads."""
+    vid = r["id"]
+    with _convert_locks_guard:
+        lock = _convert_locks.setdefault(vid, threading.Lock())
+    with lock:
+        cache, args, fmt, _quick = plan_conversion(r)
+        if os.path.exists(cache) and os.path.getsize(cache) > 0:
+            return cache
+        tmp = os.path.join(TRANS_DIR, vid + ".part." + fmt)
+        try:
+            subprocess.run([FFMPEG, "-y", "-i", r["path"]] + args + ["-f", fmt, tmp], capture_output=True, timeout=3600)
+            if os.path.exists(tmp) and os.path.getsize(tmp) > 0:
+                os.replace(tmp, cache)
+                threading.Thread(target=prune_transcodes, daemon=True).start()
+                return cache
+        except Exception:
+            pass
+        try:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+        except OSError:
+            pass
+        return None
+
+
+_prep_q: "queue.Queue[str]" = queue.Queue()
+_prep_pending: set = set()
+_prep_worker = None
+
+
+def _prep_loop() -> None:
+    while True:
+        vid = _prep_q.get()
+        try:
+            r = get_rec(vid)
+            if r:
+                convert_to_cache(r)
+        finally:
+            _prep_pending.discard(vid)
+
+
+@app.route("/api/preview/<vid>")
+def api_preview(vid):
+    """What the hover preview can use: a playable stream now, or (while a quick
+    repackaging runs in the background) the storyboard frames."""
+    global _prep_worker
+    r = get_rec(vid)
+    if not allowed(r):
+        abort(404)
+    if r["native"] or cached_copy(r):
+        return {"src": url_for("stream", vid=vid)}
+    _cache, _args, _fmt, quick = plan_conversion(r)
+    if quick and vid not in _prep_pending:   # seconds of work: do it now, one at a time
+        _prep_pending.add(vid)
+        _prep_q.put(vid)
+        if _prep_worker is None or not _prep_worker.is_alive():
+            _prep_worker = threading.Thread(target=_prep_loop, daemon=True)
+            _prep_worker.start()
+    return {"src": None, "preparing": quick, "storyboard": storyboard_meta(vid)}
+
+
 @app.route("/stream/<vid>")
 def stream(vid):
     r = get_rec(vid)
@@ -631,42 +727,10 @@ def stream(vid):
 
     # Non-native (mkv/ts/avi/…): serve a CACHED real mp4 so the player gets the
     # correct total duration AND can seek. First play builds the cache; later plays
-    # are instant. For H.264 we copy the video (fast) + re-encode audio to AAC; for
-    # other codecs we transcode once. The '+faststart' moov carries the duration.
-    v, a = probe_codecs(r["path"])
-    if v == "h264":
-        # Already H.264 → remux to mp4 (copy video, AAC audio). Fast.
-        ext, fmt = "mp4", "mp4"
-        args = ["-c:v", "copy", "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart"]
-    elif v in ("vp9", "vp8", "av1"):
-        # WebM-native codecs → remux to WebM (copy, instant, no quality loss).
-        aargs = ["-c:a", "copy"] if a in ("opus", "vorbis") else ["-c:a", "libopus"]
-        ext, fmt = "webm", "webm"
-        args = ["-c:v", "copy"] + aargs
-    else:
-        # Anything else (mpeg2/vc1/wmv/…) → transcode to H.264/mp4 once.
-        ext, fmt = "mp4", "mp4"
-        args = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
-                "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart"]
-
-    cache = os.path.join(TRANS_DIR, vid + "." + ext)
-    if not (os.path.exists(cache) and os.path.getsize(cache) > 0):
-        tmp = os.path.join(TRANS_DIR, vid + ".part." + ext)
-        cmd = [FFMPEG, "-y", "-i", r["path"]] + args + ["-f", fmt, tmp]
-        try:
-            subprocess.run(cmd, capture_output=True, timeout=3600)
-            if os.path.exists(tmp) and os.path.getsize(tmp) > 0:
-                os.replace(tmp, cache)
-            else:
-                return _live_stream(r)
-        except Exception:
-            try:
-                if os.path.exists(tmp):
-                    os.remove(tmp)
-            except OSError:
-                pass
-            return _live_stream(r)
-        threading.Thread(target=prune_transcodes, daemon=True).start()
+    # are instant.
+    cache = convert_to_cache(r)
+    if not cache:
+        return _live_stream(r)
     try:
         os.utime(cache)  # last watched -> least-recently-watched copies are removed first
     except OSError:

@@ -493,12 +493,41 @@
     var SPK_OFF = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M16.5 12A4.5 4.5 0 0 0 14 8v2.18l2.45 2.45c.03-.2.05-.41.05-.63zM19 12c0 .94-.2 1.82-.54 2.64l1.51 1.51A8.8 8.8 0 0 0 21 12a9 9 0 0 0-7-8.77v2.06A7 7 0 0 1 19 12zM4.27 3 3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06a9 9 0 0 0 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4 9.91 6.09 12 8.18V4z"/></svg>';
     function pfmt(t) { t = Math.max(0, Math.floor(t || 0)); var h = Math.floor(t / 3600), m = Math.floor(t % 3600 / 60), x = t % 60;
       return (h ? h + ":" + (m < 10 ? "0" : "") : "") + m + ":" + (x < 10 ? "0" : "") + x; }
-    if ((window.OTUBE || {}).hoverPreview !== false) grid.querySelectorAll('.card[data-native="1"]').forEach(function (card) {
+    // Storyboard "player": frames from the sprite sheet with the same API as <video>,
+    // used for MKV/AVI/... until (or instead of) a playable copy.
+    function storyboardPlayer(sb) {
+      var el = document.createElement("div"), t = 0, timer = null;
+      el.className = "preview preview--sb";
+      el.style.backgroundImage = "url(" + sb.src + ")";
+      var dur = sb.count * sb.interval;
+      function draw() {
+        var w = el.offsetWidth || 320, h = el.offsetHeight || 180;
+        var i = Math.min(sb.count - 1, Math.floor(t / sb.interval));
+        el.style.backgroundSize = (sb.cols * w) + "px " + (sb.rows * h) + "px";
+        el.style.backgroundPosition = (-(i % sb.cols) * w) + "px " + (-Math.floor(i / sb.cols) * h) + "px";
+        el.dispatchEvent(new Event("timeupdate"));
+      }
+      Object.defineProperty(el, "duration", { get: function () { return dur; } });
+      Object.defineProperty(el, "currentTime", { get: function () { return t; }, set: function (v) { t = Math.max(0, Math.min(dur, v)); draw(); } });
+      el.muted = true; el.isStoryboard = true;
+      el.play = function () {   // a frame every 0.6s, skipping ahead ~1/40 of the video
+        clearInterval(timer);
+        timer = setInterval(function () { t = (t + Math.max(sb.interval, dur / 40)) % dur; draw(); }, 600);
+        return Promise.resolve();
+      };
+      el.pause = function () { clearInterval(timer); };
+      var rm = el.remove.bind(el);
+      el.remove = function () { clearInterval(timer); rm(); };
+      setTimeout(draw, 0);
+      return el;
+    }
+    if ((window.OTUBE || {}).hoverPreview !== false) grid.querySelectorAll('.card').forEach(function (card) {
       var thumb = card.querySelector(".thumb");
       var id = card.getAttribute("data-id");
-      var timer = null, vid = null, ui = null, dragging = false, baseHref = thumb.getAttribute("href");
+      var timer = null, vid = null, ui = null, dragging = false, baseHref = thumb.getAttribute("href"), hovering = false, poll = null;
+      var native = card.getAttribute("data-native") === "1";
       function stop() {
-        clearTimeout(timer);
+        clearTimeout(timer); clearTimeout(poll);
         if (vid) { try { vid.pause(); } catch (e) {} vid.remove(); vid = null; }
         if (ui) { ui.remove(); ui = null; }
         card.classList.remove("previewing");
@@ -513,7 +542,7 @@
         thumb.appendChild(ui);
         var bar = ui.querySelector(".pv-bar"), fill = ui.querySelector(".pv-fill"), knob = ui.querySelector(".pv-knob"),
             tip = ui.querySelector(".pv-tip"), time = ui.querySelector(".pv-time"), mute = ui.querySelector(".pv-mute");
-        function syncMute() { mute.innerHTML = vid.muted ? SPK_OFF : SPK_ON; mute.title = vid.muted ? "Unmute" : "Mute"; }
+        function syncMute() { mute.hidden = !!vid.isStoryboard; mute.innerHTML = vid.muted ? SPK_OFF : SPK_ON; mute.title = vid.muted ? "Unmute" : "Mute"; }
         syncMute();
         mute.addEventListener("click", function (e) {
           e.preventDefault(); e.stopPropagation();
@@ -551,27 +580,55 @@
         bar.addEventListener("pointerup", end);
         bar.addEventListener("pointercancel", end);
         // the bar sits inside the link: don't navigate when using it
-        ui.addEventListener("click", function (e) { if (e.target.closest(".pv-bar, .pv-mute")) { e.preventDefault(); e.stopPropagation(); } }, true);
+        // (only the bar here: stopping clicks in the capture phase would also block the mute button)
+        ui.addEventListener("click", function (e) { if (e.target.closest(".pv-bar")) { e.preventDefault(); e.stopPropagation(); } }, true);
+      }
+      function startVideo(src, at) {
+        var old = vid;
+        vid = document.createElement("video");
+        vid.className = "preview";
+        var m = "1"; try { m = localStorage.getItem(MUTE_KEY) || "1"; } catch (e) {}
+        vid.muted = m !== "0"; vid.playsInline = true; vid.loop = true; vid.preload = "auto";
+        vid.src = src;
+        thumb.appendChild(vid);
+        card.classList.add("previewing");
+        vid.addEventListener("loadeddata", function () {
+          try {
+            if (at != null) vid.currentTime = at;
+            else if (vid.duration && vid.duration > 15) vid.currentTime = Math.min(10, vid.duration * 0.15);
+          } catch (e) {}
+          vid.classList.add("show");
+          if (old) { old.remove(); if (ui) { ui.remove(); ui = null; } }   // storyboard -> real video
+          vid.play().catch(function () { if (vid && !vid.muted) { vid.muted = true; vid.play().catch(function () {}); } });
+          if (!ui) build();
+        });
+      }
+      function startStoryboard(sb) {
+        vid = storyboardPlayer(sb);
+        thumb.appendChild(vid);
+        card.classList.add("previewing");
+        vid.currentTime = Math.min(10, vid.duration * 0.15);
+        requestAnimationFrame(function () { if (vid) { vid.classList.add("show"); vid.play(); } });
+        build();
+      }
+      function askServer() {   // MKV/AVI...: playable copy ready? else storyboard while it's prepared
+        fetch("/api/preview/" + id).then(function (r) { return r.json(); }).then(function (d) {
+          if (!hovering) return;
+          if (d.src) { startVideo(d.src, vid && vid.isStoryboard ? vid.currentTime : null); return; }
+          var sb = d.storyboard || {};
+          if (sb.ready && !vid) startStoryboard(sb);
+          if (d.preparing || !sb.ready) poll = setTimeout(askServer, 1500);   // keep checking while hovered
+        }).catch(function () {});
       }
       card.addEventListener("mouseenter", function () {
         if (grid.classList.contains("selecting")) return;
+        hovering = true;
         timer = setTimeout(function () {
-          vid = document.createElement("video");
-          vid.className = "preview";
-          var m = "1"; try { m = localStorage.getItem(MUTE_KEY) || "1"; } catch (e) {}
-          vid.muted = m !== "0"; vid.playsInline = true; vid.loop = true; vid.preload = "auto";
-          vid.src = "/stream/" + id;
-          thumb.appendChild(vid);
-          card.classList.add("previewing");
-          vid.addEventListener("loadeddata", function () {
-            try { if (vid.duration && vid.duration > 15) vid.currentTime = Math.min(10, vid.duration * 0.15); } catch (e) {}
-            vid.classList.add("show");
-            vid.play().catch(function () { if (vid && !vid.muted) { vid.muted = true; vid.play().catch(function () {}); } });
-            if (!ui) build();
-          });
+          if (native) startVideo("/stream/" + id);
+          else askServer();
         }, 550);
       });
-      card.addEventListener("mouseleave", function () { if (!dragging) stop(); });
+      card.addEventListener("mouseleave", function () { hovering = false; if (!dragging) stop(); });
     });
   }
 

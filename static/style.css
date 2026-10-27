@@ -1420,3 +1420,8 @@ body.embed { margin: 0; background: #000; overflow: hidden; }
 .pv-bar:hover .pv-tip, .pv-bar.dragging .pv-tip { opacity: 1; }
 .card.previewing .ext-badge, .card.previewing .badge { opacity: 0; }
 .card.previewing .watched { display: none; }
+
+/* storyboard preview (formats the browser can't play yet) */
+.preview--sb { background-color: #000; background-repeat: no-repeat; }
+.preview.preview--sb.show { opacity: 1; }
+.pv-mute[hidden] { display: none; }
