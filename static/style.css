@@ -1330,3 +1330,24 @@ body.embed { margin: 0; background: #000; overflow: hidden; }
   /* Firefox: contrast on pictures only (videos + thumbnails), not the whole page */
   html.app-filter img, html.app-filter video { filter: contrast(var(--app-c, 1)); }
 }
+
+/* Mini player (embed): it's narrow, but it's not a phone. Keep every control,
+   just smaller; only drop extras when it's really tiny. */
+@media (max-width: 640px) {
+  .embed .p-btn[data-a="prev"]:not([hidden]), .embed .p-btn[data-a="cc"]:not([hidden]),
+  .embed .p-btn[data-a="mini"]:not([hidden]) { display: grid; }
+  .embed .p-switch:not([hidden]) { display: grid; }
+  .embed .p-bright { display: flex; }
+}
+.embed .p-pill .p-btn { width: 34px; height: 34px; }
+.embed .p-pill .p-btn svg { width: 20px; height: 20px; }
+.embed .p-pill .p-time { padding: 0 8px; font-size: 12.5px; }
+.embed .p-left, .embed .p-right { gap: 4px; }
+.embed .p-controls { padding: 0 8px 6px; }
+@media (max-width: 420px) {
+  .embed .p-bright, .embed .p-btn[data-a="mini"] { display: none !important; }
+}
+@supports (-moz-appearance: none) {
+  /* the mini player's video lives in its own frame: give the frame the contrast */
+  html.app-filter .mini__frame { filter: contrast(var(--app-c, 1)); }
+}
