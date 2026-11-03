@@ -204,17 +204,31 @@
         .catch(function () { btn.disabled = false; btn.textContent = label; });
     });
   }
-  var ct = document.getElementById("clear-transcoded");
-  if (ct) ct.addEventListener("click", function () {
-    clearCache(ct, "transcoded", { title: "Clear converted videos?",
-      text: "Frees the space used by converted copies. Your original videos aren't touched; a video is converted again the next time you play it (the first play takes a little longer).",
-      confirm: "Clear", danger: true });
-  });
+  // disk numbers are counted in the background: fill them in when ready
+  if (document.querySelector('[data-stat]') && [].some.call(document.querySelectorAll("[data-stat]"), function (el) { return el.textContent.trim() === "…"; })) {
+    fetch("/api/stats").then(function (r) { return r.json(); }).then(setStats).catch(function () {});
+  }
   var cth = document.getElementById("clear-thumbs");
   if (cth) cth.addEventListener("click", function () {
     clearCache(cth, "thumbs", { title: "Rebuild thumbnails?",
       text: "Deletes all thumbnails; they're recreated in the background over the next few minutes.", confirm: "Rebuild" });
   });
+
+  // ---- top bar: show the change right away ----
+  var bar = document.querySelector(".topbar");
+  ["topBrightness", "topMini", "topMode"].forEach(function (k) {
+    var t = document.querySelector('.tgl[data-k="' + k + '"]');
+    if (t && bar) t.addEventListener("click", function () {
+      setTimeout(function () { bar.classList.toggle("hide-" + k, !t.classList.contains("on")); }, 0);
+    });
+  });
+  var tsel = document.querySelector('select[data-k="topTasks"]');
+  if (tsel && bar) tsel.addEventListener("change", function () {
+    bar.setAttribute("data-tasks", tsel.value);
+    if (window.otubeTasks) window.otubeTasks();
+  });
+  var pill = document.getElementById("mode-pill");
+  if (pill) pill.addEventListener("click", function () { var mb = document.getElementById("mode-btn"); if (mb) mb.click(); });
 
   // ---- devices: copy address ----
   var cp = document.getElementById("copy-lan");

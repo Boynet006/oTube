@@ -3,8 +3,9 @@
 Serves videos from configurable folders (config.json): a YouTube-like home grid
 with real ffmpeg thumbnails + durations, a watch page with an "Up next" rail +
 autoplay + resume, live search, sort, and add/remove folders. mp4/webm/mov/m4v
-stream directly with HTTP range (seeking); mkv/avi are remuxed to fragmented mp4
-on the fly so they play in the browser too.
+stream directly with HTTP range (seeking); mkv/avi/ts are repackaged (or, for old
+codecs, re-encoded) live, a piece at a time, so they play and seek too. Nothing
+converted is stored.
 """
 import glob
 import gzip
@@ -17,8 +18,9 @@ import re
 import subprocess
 import threading
 import time
+from collections import OrderedDict
 
-from flask import (Flask, Response, abort, redirect, render_template, request,
+from flask import (Flask, Response, abort, g, redirect, render_template, request,
                    send_file, session, url_for)
 from werkzeug.security import check_password_hash, generate_password_hash
 
@@ -48,16 +50,12 @@ with open(_KEY_PATH, "rb") as _f:
 PLAYLISTS_PATH = os.path.join(BASE, "playlists.json")  # [{id, name, items: [vid, ...]}]
 DUR_CACHE_PATH = os.path.join(BASE, "duration_cache.json")  # persisted path -> [secs, mtime]
 THUMB_DIR = os.path.join(BASE, "thumbs")
-TRANS_DIR = os.path.join(BASE, "transcoded")  # cached browser-playable mp4s for mkv/avi/etc.
 AUTO_SUBS_DIR = os.path.join(BASE, "subs")  # speech-to-text captions: <vid>.vtt + <vid>.json
-STORY_DIR = os.path.join(BASE, "storyboards")  # seek-preview sprite sheets: <vid>.jpg + <vid>.json
 os.makedirs(THUMB_DIR, exist_ok=True)
-os.makedirs(TRANS_DIR, exist_ok=True)
 os.makedirs(AUTO_SUBS_DIR, exist_ok=True)
-os.makedirs(STORY_DIR, exist_ok=True)
 
 # All the video containers we recognise. Browser-native ones stream directly
-# (seekable); everything else is remuxed/transcoded to mp4 on the fly.
+# (seekable); everything else is converted live as it plays (see /stream).
 NATIVE_EXTS = {".mp4", ".m4v", ".webm", ".mov", ".ogv", ".ogg"}
 NONNATIVE_EXTS = {
     ".mkv", ".avi", ".ts", ".mts", ".m2ts", ".m2t", ".flv", ".f4v", ".wmv",
@@ -159,8 +157,10 @@ SETTINGS_DEFAULTS = {
     "miniMode": False,
     "display": {"b": 1, "c": 1, "n": False, "w": 50},
     "whisperModel": os.environ.get("OTUBE_WHISPER_MODEL", "large-v3-turbo"),
-    "transcodeMaxGB": 20,      # converted-video cache limit (0 = no limit); least recently watched go first
-    "transcodeMaxDays": 0,     # remove copies not watched for N days (0 = keep)
+    "topTasks": "auto",        # background-tasks indicator in the top bar: auto (while working) | always | never
+    "topBrightness": True,     # top-bar buttons
+    "topMini": True,
+    "topMode": True,
 }
 WHISPER_MODELS = ["tiny", "base", "small", "medium", "large-v3-turbo", "large-v3"]
 SORT_ICONS = {'name': '<svg viewBox="0 0 24 24" width="22" height="22"><text x="2" y="11" font-size="9" font-weight="700" fill="currentColor">A</text><text x="2" y="21" font-size="9" font-weight="700" fill="currentColor">Z</text><path fill="currentColor" d="M16 4h2v12h3l-4 4-4-4h3z"/></svg>', 'newest': '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm0 18a8 8 0 1 1 0-16 8 8 0 0 1 0 16zm.5-13H11v6l5.2 3.2.8-1.3-4.5-2.7V7z"/></svg>', 'size': '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M2 20h20v-4H2v4zm2-3h2v2H4v-2zM2 4v4h20V4H2zm4 3H4V5h2v2zm-4 7h20v-4H2v4zm2-3h2v2H4v-2z"/></svg>', 'duration': '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M15 1H9v2h6V1zm-4 13h2V8h-2v6zm8.03-6.61 1.42-1.42c-.43-.51-.9-.99-1.41-1.41l-1.42 1.42A8.96 8.96 0 0 0 12 4a9 9 0 1 0 9 9c0-2.12-.74-4.07-1.97-5.61zM12 20a7 7 0 1 1 0-14 7 7 0 0 1 0 14z"/></svg>', 'random': '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M10.59 9.17 5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm.33 9.41-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z"/></svg>'}
@@ -259,36 +259,6 @@ def fmt_size(b: float) -> str:
     return f"{b:.1f} TB"
 
 
-def probe_vcodec(path: str) -> str:
-    """The video stream's codec (e.g. 'h264', 'hevc', 'mpeg2video'), or '' on error."""
-    try:
-        return subprocess.run(
-            [FFPROBE, "-v", "error", "-select_streams", "v:0",
-             "-show_entries", "stream=codec_name",
-             "-of", "default=nokey=1:noprint_wrappers=1", path],
-            capture_output=True, text=True, timeout=20).stdout.strip().lower()
-    except Exception:
-        return ""
-
-
-def probe_codecs(path: str) -> tuple[str, str]:
-    """(video_codec, audio_codec) lowercased, e.g. ('vp9','opus'); '' on error."""
-    try:
-        out = subprocess.run(
-            [FFPROBE, "-v", "error", "-show_entries", "stream=codec_type,codec_name",
-             "-of", "csv=p=0", path], capture_output=True, text=True, timeout=20).stdout
-    except Exception:
-        return ("", "")
-    v = a = ""
-    for line in out.splitlines():
-        toks = [t.strip().lower() for t in line.split(",") if t.strip()]
-        if "video" in toks:
-            v = v or next((t for t in toks if t != "video"), "")
-        elif "audio" in toks:
-            a = a or next((t for t in toks if t != "audio"), "")
-    return (v, a)
-
-
 def cached_duration(path: str, mtime: float) -> float | None:
     """Duration from the cache if the file is unchanged, else None (no I/O)."""
     c = _dur_cache.get(path)
@@ -361,6 +331,8 @@ def _do_scan() -> None:
     items = _scan_disk()
     _scan_state["items"], _scan_state["at"] = items, time.time()
     _wake_warmer()
+    if _disk["v"] is None:
+        disk_stats()   # count cache folders in the background so Settings opens instantly
 
 
 def _scan_disk() -> list[dict]:
@@ -408,27 +380,38 @@ def _wake_warmer() -> None:
         _warmer.start()
 
 
+_warm_state = {"busy": False}
+
+
 def _warm_loop() -> None:
-    global _dur_dirty
     while True:
         _warm_event.wait()
         _warm_event.clear()
-        items = list(_scan_state["items"] or [])
-        # durations first (they show on every card), then thumbnails
-        n = 0
-        for r in items:
-            if cached_duration(r["path"], r["mtime"]) is None:
-                probe_duration(r["path"], r["mtime"])
-                n += 1
-                if n % 25 == 0:
-                    _save_dur_cache(); _dur_dirty = False
-        if _dur_dirty:
-            _save_dur_cache(); _dur_dirty = False
-        for r in items:
-            if _warm_event.is_set():
-                break  # library changed: start over with the new list
-            if not os.path.exists(os.path.join(THUMB_DIR, r["id"] + ".jpg")):
-                make_thumb(r)
+        _warm_state["busy"] = True
+        try:
+            _warm_once()
+        finally:
+            _warm_state["busy"] = False
+
+
+def _warm_once() -> None:
+    global _dur_dirty
+    items = list(_scan_state["items"] or [])
+    # durations first (they show on every card), then thumbnails
+    n = 0
+    for r in items:
+        if cached_duration(r["path"], r["mtime"]) is None:
+            probe_duration(r["path"], r["mtime"])
+            n += 1
+            if n % 25 == 0:
+                _save_dur_cache(); _dur_dirty = False
+    if _dur_dirty:
+        _save_dur_cache(); _dur_dirty = False
+    for r in items:
+        if _warm_event.is_set():
+            break  # library changed: _warm_loop runs again with the new list
+        if not os.path.exists(os.path.join(THUMB_DIR, r["id"] + ".jpg")):
+            make_thumb(r)
 
 
 def enrich(items: list[dict]) -> list[dict]:
@@ -593,18 +576,65 @@ def watch(vid):
                            folder_trees=folder_trees(scan(), cfg.get("video_folders", [])))
 
 
+# ---- MKV/AVI/TS…: converted live, a short piece at a time (nothing is stored) ----
+# The player asks for ~30 s pieces (/stream/<vid>?start=&len=) and feeds them to a Media
+# Source buffer (static/stream.js). Pieces keep the file's own timestamps, so they line up
+# exactly: duration, seeking and captions behave like a normal file. H.264/VP9/AV1 video
+# is copied untouched (no quality loss, almost no CPU); only codecs no browser can play
+# (MPEG-4 Part 2, MPEG-2, WMV, HEVC…) are re-encoded to H.264.
+_media: dict[str, dict] = {}   # vid -> {mtime, v, a, start}: codecs + first timestamp
+
+
+def media_info(r: dict) -> dict:
+    m = _media.get(r["id"])
+    if m and m["mtime"] == r["mtime"]:
+        return m
+    v = a = ""
+    start = 0.0
+    try:
+        out = json.loads(subprocess.run(
+            [FFPROBE, "-v", "error", "-show_entries", "stream=codec_type,codec_name:stream_disposition=attached_pic:format=start_time",
+             "-of", "json", r["path"]], capture_output=True, text=True, timeout=20).stdout or "{}")
+        for st in out.get("streams", []):
+            if st.get("codec_type") == "video" and not v and not st.get("disposition", {}).get("attached_pic"):
+                v = st.get("codec_name", "")
+            elif st.get("codec_type") == "audio" and not a:
+                a = st.get("codec_name", "")
+        start = float(out.get("format", {}).get("start_time") or 0)
+    except Exception:
+        pass
+    m = {"mtime": r["mtime"], "v": v.lower(), "a": a.lower(), "start": start}
+    _media[r["id"]] = m
+    return m
+
+
+COPY_VIDEO = {"h264": "avc1.640029", "vp9": "vp09.00.40.08", "av1": "av01.0.08M.08"}  # codec -> MSE codec string
+
+
+def live_plan(m: dict) -> tuple[list, str, bool]:
+    """(ffmpeg codec args, MIME type for Media Source, video copied untouched?)"""
+    copy = m["v"] in COPY_VIDEO
+    args = ["-c:v", "copy"] if copy else ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p"]
+    codecs = [COPY_VIDEO.get(m["v"], "avc1.640029")]
+    if m["a"] == "aac":
+        args += ["-c:a", "copy", "-bsf:a", "aac_adtstoasc"]; codecs.append("mp4a.40.2")
+    elif m["a"] == "opus":
+        args += ["-c:a", "copy"]; codecs.append("opus")
+    elif m["a"]:
+        args += ["-c:a", "aac", "-b:a", "192k"]; codecs.append("mp4a.40.2")
+    else:
+        args += ["-an"]
+    return args, 'video/mp4; codecs="' + ",".join(codecs) + '"', copy
+
+
 def _live_stream(r: dict) -> Response:
-    """Fallback: pipe a live fragmented mp4 (plays immediately, but the browser
-    can't know the total duration / seek well). Used only when we can't quickly
-    produce a cached file."""
-    vcodec = probe_vcodec(r["path"])
-    vargs = ["-c:v", "copy"] if vcodec == "h264" else ["-c:v", "libx264", "-preset", "veryfast", "-crf", "23"]
+    """Fallback for browsers without Media Source: one continuous stream from the
+    start (plays, but can't seek past what has arrived)."""
+    args = live_plan(media_info(r))[0]
 
     def generate():
-        cmd = ([FFMPEG, "-i", r["path"]] + vargs +
-               ["-c:a", "aac", "-b:a", "160k",
-                "-movflags", "frag_keyframe+empty_moov+default_base_moof",
-                "-f", "mp4", "pipe:1"])
+        cmd = ([FFMPEG, "-v", "error", "-i", r["path"], "-map", "0:V:0", "-map", "0:a:0?"] + args +
+               ["-sn", "-dn", "-movflags", "frag_keyframe+empty_moov+default_base_moof", "-f", "mp4", "pipe:1"])
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         try:
             while True:
@@ -620,100 +650,18 @@ def _live_stream(r: dict) -> Response:
     return Response(generate(), mimetype="video/mp4")
 
 
-_codec_cache: dict[str, tuple] = {}           # vid -> (video codec, audio codec)
-_convert_locks: dict[str, threading.Lock] = {}
-_convert_locks_guard = threading.Lock()
-
-
-def plan_conversion(r: dict):
-    """(cache path, ffmpeg args, container, quick?) for a non-native video.
-    quick = only repackaged (no re-encode of the picture), takes seconds."""
-    vid = r["id"]
-    if vid not in _codec_cache:
-        _codec_cache[vid] = probe_codecs(r["path"])
-    v, a = _codec_cache[vid]
-    if v == "h264":
-        # Already H.264 -> remux to mp4 (copy video, AAC audio). Fast.
-        ext, args, quick = "mp4", ["-c:v", "copy", "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart"], True
-    elif v in ("vp9", "vp8", "av1"):
-        # WebM-native codecs -> remux to WebM (copy, no quality loss).
-        aargs = ["-c:a", "copy"] if a in ("opus", "vorbis") else ["-c:a", "libopus"]
-        ext, args, quick = "webm", ["-c:v", "copy"] + aargs, True
-    else:
-        # Anything else (mpeg2/vc1/wmv/hevc...) -> transcode to H.264/mp4 once.
-        ext, args, quick = "mp4", ["-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
-                                   "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart"], False
-    return os.path.join(TRANS_DIR, vid + "." + ext), args, ext, quick
-
-
-def cached_copy(r: dict) -> str | None:
-    for ext in ("mp4", "webm"):
-        p = os.path.join(TRANS_DIR, r["id"] + "." + ext)
-        if os.path.exists(p) and os.path.getsize(p) > 0:
-            return p
-    return None
-
-
-def convert_to_cache(r: dict) -> str | None:
-    """Build (once) the browser-playable copy; safe to call from several threads."""
-    vid = r["id"]
-    with _convert_locks_guard:
-        lock = _convert_locks.setdefault(vid, threading.Lock())
-    with lock:
-        cache, args, fmt, _quick = plan_conversion(r)
-        if os.path.exists(cache) and os.path.getsize(cache) > 0:
-            return cache
-        tmp = os.path.join(TRANS_DIR, vid + ".part." + fmt)
-        try:
-            subprocess.run([FFMPEG, "-y", "-i", r["path"]] + args + ["-f", fmt, tmp], capture_output=True, timeout=3600)
-            if os.path.exists(tmp) and os.path.getsize(tmp) > 0:
-                os.replace(tmp, cache)
-                threading.Thread(target=prune_transcodes, daemon=True).start()
-                return cache
-        except Exception:
-            pass
-        try:
-            if os.path.exists(tmp):
-                os.remove(tmp)
-        except OSError:
-            pass
-        return None
-
-
-_prep_q: "queue.Queue[str]" = queue.Queue()
-_prep_pending: set = set()
-_prep_worker = None
-
-
-def _prep_loop() -> None:
-    while True:
-        vid = _prep_q.get()
-        try:
-            r = get_rec(vid)
-            if r:
-                convert_to_cache(r)
-        finally:
-            _prep_pending.discard(vid)
-
-
-@app.route("/api/preview/<vid>")
-def api_preview(vid):
-    """What the hover preview can use: a playable stream now, or (while a quick
-    repackaging runs in the background) the storyboard frames."""
-    global _prep_worker
+@app.route("/api/media/<vid>")
+def api_media(vid):
+    """How the player should load a video: directly, or piece by piece (see above)."""
     r = get_rec(vid)
     if not allowed(r):
         abort(404)
-    if r["native"] or cached_copy(r):
-        return {"src": url_for("stream", vid=vid)}
-    _cache, _args, _fmt, quick = plan_conversion(r)
-    if quick and vid not in _prep_pending:   # seconds of work: do it now, one at a time
-        _prep_pending.add(vid)
-        _prep_q.put(vid)
-        if _prep_worker is None or not _prep_worker.is_alive():
-            _prep_worker = threading.Thread(target=_prep_loop, daemon=True)
-            _prep_worker.start()
-    return {"src": None, "preparing": quick, "storyboard": storyboard_meta(vid)}
+    if r["native"]:
+        return {"native": True}
+    m = media_info(r)
+    _args, mime, copy = live_plan(m)
+    return {"native": False, "dur": probe_duration(r["path"], r["mtime"]), "mime": mime,
+            "offset": m["start"], "first": 8 if copy else 4, "chunk": 30 if copy else 12}
 
 
 @app.route("/stream/<vid>")
@@ -724,18 +672,20 @@ def stream(vid):
     if r["native"]:
         # Direct stream with HTTP Range support (seeking works).
         return send_file(r["path"], conditional=True)
-
-    # Non-native (mkv/ts/avi/…): serve a CACHED real mp4 so the player gets the
-    # correct total duration AND can seek. First play builds the cache; later plays
-    # are instant.
-    cache = convert_to_cache(r)
-    if not cache:
+    start = request.args.get("start", type=float)
+    if start is None:
         return _live_stream(r)
+    length = min(60.0, max(1.0, request.args.get("len", 30.0, type=float)))
+    args = live_plan(media_info(r))[0]
+    # -copyts + frag_discont (needs delay_moov): the piece keeps the file's own timestamps
+    cmd = ([FFMPEG, "-v", "error", "-copyts", "-ss", f"{max(0.0, start):.3f}", "-t", f"{length:.3f}", "-i", r["path"],
+            "-map", "0:V:0", "-map", "0:a:0?"] + args +
+           ["-sn", "-dn", "-movflags", "frag_keyframe+delay_moov+default_base_moof+frag_discont", "-f", "mp4", "pipe:1"])
     try:
-        os.utime(cache)  # last watched -> least-recently-watched copies are removed first
-    except OSError:
-        pass
-    return send_file(cache, conditional=True)
+        out = subprocess.run(cmd, capture_output=True, timeout=180).stdout
+    except subprocess.TimeoutExpired:
+        abort(504)
+    return Response(out, mimetype="video/mp4", headers={"Cache-Control": "no-store"})
 
 
 # ---- Subtitles / captions ----
@@ -744,6 +694,7 @@ def stream(vid):
 SUB_EXTS = (".vtt", ".srt", ".ass", ".ssa")
 TEXT_SUB_CODECS = {"subrip", "srt", "ass", "ssa", "webvtt", "mov_text", "text"}
 _subs_cache: dict[str, tuple] = {}  # vid -> (mtime, [tracks])
+_vtt_cache: dict[tuple, bytes] = {}  # (vid, key, mtime) -> converted WebVTT
 
 
 def list_subs(r: dict) -> list[dict]:
@@ -827,21 +778,24 @@ def subs_file(vid, key):
         abort(404)
     if t.get("auto"):
         return send_file(t["src"], mimetype="text/vtt", max_age=0)
-    out = os.path.join(TRANS_DIR, f"{vid}.{key}.vtt")
-    if not (os.path.exists(out) and os.path.getsize(out) > 0):
-        if "src" in t and t["src"].lower().endswith(".vtt"):
-            return send_file(t["src"], mimetype="text/vtt")
-        cmd = [FFMPEG, "-y", "-i", t.get("src") or r["path"]]
+    if "src" in t and t["src"].lower().endswith(".vtt"):
+        return send_file(t["src"], mimetype="text/vtt")
+    out = _vtt_cache.get((vid, key, r["mtime"]))
+    if out is None:   # .srt/.ass sidecar or embedded track -> WebVTT, kept in memory
+        cmd = [FFMPEG, "-v", "error", "-i", t.get("src") or r["path"]]
         if "stream" in t:
             cmd += ["-map", f"0:{t['stream']}"]
-        cmd += ["-f", "webvtt", out]
+        cmd += ["-f", "webvtt", "pipe:1"]
         try:
-            subprocess.run(cmd, capture_output=True, timeout=120)
+            out = subprocess.run(cmd, capture_output=True, timeout=120).stdout
         except Exception:
-            pass
-        if not os.path.exists(out):
+            out = b""
+        if not out:
             abort(404)
-    return send_file(out, mimetype="text/vtt")
+        if len(_vtt_cache) > 200:
+            _vtt_cache.clear()
+        _vtt_cache[(vid, key, r["mtime"])] = out
+    return Response(out, mimetype="text/vtt")
 
 
 # ---- Auto-generated captions (speech-to-text with faster-whisper) ----
@@ -1065,76 +1019,42 @@ def subs_status(vid):
     return _job_status(vid, os.path.exists(os.path.join(AUTO_SUBS_DIR, vid + ".vtt")))
 
 
-# ---- Seek previews ("storyboards"): one sprite sheet of small frames per video ----
-SB_W, SB_H, SB_COLS, SB_MAX = 320, 180, 10, 200  # 320x180 frames: sharp when shown large
-_sb_q: "queue.Queue[str]" = queue.Queue()
-_sb_pending: set = set()
-_sb_worker = None
+# One directory listing instead of a file check per video: checking hundreds of files
+# one by one on the host-mounted data folder takes seconds.
+_listings: dict[str, tuple] = {}
 
 
-def _make_storyboard(vid: str) -> None:
-    r = get_rec(vid)
-    if not r:
-        return
-    d = probe_duration(r["path"], r["mtime"])
-    if d <= 0:
-        return
-    interval = max(2, -(-int(d) // SB_MAX))          # ≤ 200 frames, ≥ 2 s apart
-    count = max(1, -(-int(d) // interval))
-    rows = -(-count // SB_COLS)
-    tmp = os.path.join(STORY_DIR, vid + ".part.jpg")
-    # keyframes only (-skip_frame nokey): fast even for hour-long videos
-    cmd = [FFMPEG, "-v", "error", "-y", "-skip_frame", "nokey", "-i", r["path"], "-an", "-sn",
-           "-vf", f"fps=1/{interval},scale={SB_W}:{SB_H}:force_original_aspect_ratio=decrease,"
-                  f"pad={SB_W}:{SB_H}:(ow-iw)/2:(oh-ih)/2,tile={SB_COLS}x{rows}",
-           "-frames:v", "1", "-q:v", "6", tmp]
+def dir_names(path: str, ttl: float = 3) -> set:
+    hit = _listings.get(path)
+    if hit and time.time() - hit[0] < ttl:
+        return hit[1]
     try:
-        subprocess.run(cmd, capture_output=True, timeout=900)
-    except Exception:
-        pass
-    if os.path.exists(tmp) and os.path.getsize(tmp) > 0:
-        with open(os.path.join(STORY_DIR, vid + ".json"), "w") as f:
-            json.dump({"interval": interval, "count": count, "cols": SB_COLS, "rows": rows, "w": SB_W, "h": SB_H}, f)
-        os.replace(tmp, os.path.join(STORY_DIR, vid + ".jpg"))
+        names = set(os.listdir(path))
+    except OSError:
+        names = set()
+    _listings[path] = (time.time(), names)
+    return names
 
 
-def _sb_loop() -> None:
-    while True:
-        vid = _sb_q.get()
-        try:
-            _make_storyboard(vid)
-        finally:
-            _sb_pending.discard(vid)
+@app.route("/api/tasks")
+def api_tasks():
+    """Background work, for the top-bar indicator."""
+    ids = {r["id"] for r in visible(scan())}
+    tn = dir_names(THUMB_DIR)
+    thumbs = sum(1 for v in ids if v + ".jpg" in tn)
+    return {"thumbs": {"done": thumbs, "total": len(ids), "running": _warm_state["busy"] and thumbs < len(ids)}}
 
 
-@app.route("/storyboard/<vid>.json")
-def storyboard_meta(vid):
-    global _sb_worker
-    if not allowed(get_rec(vid)):
-        abort(404)
-    meta = os.path.join(STORY_DIR, vid + ".json")
-    if os.path.exists(meta) and os.path.exists(os.path.join(STORY_DIR, vid + ".jpg")):
-        with open(meta) as f:
-            m = json.load(f)
-        if m.get("w") == SB_W:  # older, smaller sheets get rebuilt below
-            return {"ready": True, "src": url_for("storyboard_img", vid=vid, v=int(os.path.getmtime(meta))), **m}
-    if vid not in _sb_pending:  # build it in the background, one video at a time
-        _sb_pending.add(vid)
-        _sb_q.put(vid)
-        if _sb_worker is None or not _sb_worker.is_alive():
-            _sb_worker = threading.Thread(target=_sb_loop, daemon=True)
-            _sb_worker.start()
-    return {"ready": False}
+def thumb_overrides() -> dict:
+    """vid -> second of the video chosen as its thumbnail (Change thumbnail…)."""
+    return load_config().get("thumbs", {})
 
 
-@app.route("/storyboard/<vid>.jpg")
-def storyboard_img(vid):
-    if not allowed(get_rec(vid)):
-        abort(404)
-    p = os.path.join(STORY_DIR, vid + ".jpg")
-    if not os.path.exists(p):
-        abort(404)
-    return send_file(p, mimetype="image/jpeg", max_age=7 * 86400)
+def thumb_url(vid: str) -> str:
+    if "thumbs" not in g:  # read once per page, not once per card
+        g.thumbs = thumb_overrides()
+    t = g.thumbs.get(vid)
+    return f"/thumb/{vid}" + (f"?at={t:g}" if t is not None else "")  # new URL -> browsers drop the old image
 
 
 def make_thumb(r: dict) -> str | None:
@@ -1142,7 +1062,8 @@ def make_thumb(r: dict) -> str | None:
     tp = os.path.join(THUMB_DIR, r["id"] + ".jpg")
     if os.path.exists(tp) and os.path.getsize(tp) > 0:
         return tp
-    for ss in ("00:00:05", "00:00:01"):
+    at = thumb_overrides().get(r["id"])
+    for ss in ((str(at),) if at is not None else ()) + ("00:00:05", "00:00:01"):
         try:
             subprocess.run(
                 [FFMPEG, "-ss", ss, "-i", r["path"], "-frames:v", "1",
@@ -1153,6 +1074,68 @@ def make_thumb(r: dict) -> str | None:
         except Exception:
             pass
     return None
+
+
+@app.route("/thumb/<vid>/frame")
+def thumb_frame(vid):
+    """A small frame at ?t=seconds: the thumbnail picker, and the seek-bar preview
+    (?fast=1: the nearest keyframe, ~0.1 s). Kept in memory, never stored."""
+    r = get_rec(vid)
+    if not allowed(r):
+        abort(404)
+    t = max(0.0, request.args.get("t", 0, type=float))
+    fast = request.args.get("fast") == "1"
+    key = (vid, round(t, 1), fast, r["mtime"])
+    out = _frames.get(key)
+    if out is None:
+        try:
+            out = subprocess.run([FFMPEG, "-v", "error"] + (["-noaccurate_seek"] if fast else []) +
+                                 ["-ss", f"{t:.2f}", "-i", r["path"], "-map", "0:V:0", "-frames:v", "1",
+                                  "-vf", "scale=320:-2", "-q:v", "5" if fast else "4", "-f", "image2pipe", "-vcodec", "mjpeg", "-"],
+                                 capture_output=True, timeout=30).stdout
+        except Exception:
+            out = b""
+        if not out:
+            abort(404)
+        _frames[key] = out
+        while len(_frames) > 800:   # ~10 MB
+            _frames.popitem(last=False)
+    else:
+        _frames.move_to_end(key)
+    return Response(out, mimetype="image/jpeg", headers={"Cache-Control": "private, max-age=86400"})
+
+
+_frames: "OrderedDict[tuple, bytes]" = OrderedDict()
+
+
+@app.route("/api/thumb/<vid>", methods=["GET", "POST"])
+def api_thumb(vid):
+    """GET: duration + chosen time. POST {t: seconds | null}: use that frame (null = default)."""
+    r = get_rec(vid)
+    if not allowed(r):
+        abort(404)
+    dur = probe_duration(r["path"], r["mtime"])
+    if request.method == "POST":
+        t = (request.get_json(silent=True) or {}).get("t")
+        cfg = load_config()
+        thumbs = cfg.setdefault("thumbs", {})
+        if t is None:
+            thumbs.pop(vid, None)
+        else:
+            try:
+                t = round(min(max(0.0, float(t)), max(0.0, dur - 0.5) if dur else float(t)), 2)
+            except (TypeError, ValueError):
+                return {"ok": False, "error": "bad time"}, 400
+            thumbs[vid] = t
+        save_config(cfg)
+        tp = os.path.join(THUMB_DIR, vid + ".jpg")
+        try:
+            if os.path.exists(tp):
+                os.remove(tp)
+        except OSError:
+            pass
+        make_thumb(r)
+    return {"ok": True, "dur": dur, "t": thumb_overrides().get(vid), "src": thumb_url(vid)}
 
 
 @app.route("/thumb/<vid>")
@@ -1277,7 +1260,7 @@ def compress(resp):
 
 @app.context_processor
 def inject_settings():
-    return {"app_settings": get_settings()}
+    return {"app_settings": get_settings(), "thumb_url": thumb_url}
 
 
 @app.route("/settings")
@@ -1302,67 +1285,12 @@ def _dir_size(path: str) -> int:
     return total
 
 
-# ---- Converted-video cache (mkv/avi/ts/... -> browser-playable copies) ----
-def _transcode_files() -> list[tuple]:
-    """[(path, size, mtime)] of finished converted copies (in-progress .part files excluded)."""
-    out = []
-    try:
-        for e in os.scandir(TRANS_DIR):
-            if e.is_file() and ".part." not in e.name and e.name.endswith((".mp4", ".webm")):
-                st = e.stat()
-                out.append((e.path, st.st_size, st.st_mtime))
-    except OSError:
-        pass
-    return out
-
-
-def prune_transcodes() -> int:
-    """Apply the size/age limits from Settings. Returns bytes freed."""
-    s = get_settings()
-    max_bytes = float(s.get("transcodeMaxGB") or 0) * 1024 ** 3
-    max_age = float(s.get("transcodeMaxDays") or 0) * 86400
-    files = sorted(_transcode_files(), key=lambda f: f[2])  # least recently watched first
-    now, freed = time.time(), 0
-    total = sum(f[1] for f in files)
-    for path, size, mtime in files:
-        if now - mtime < 120:  # never remove something that's playing right now
-            continue
-        too_old = max_age and now - mtime > max_age
-        too_big = max_bytes and total > max_bytes
-        if not (too_old or too_big):
-            continue
-        try:
-            os.remove(path)
-            total -= size
-            freed += size
-        except OSError:
-            pass
-    return freed
-
-
-def _prune_loop() -> None:
-    while True:
-        time.sleep(3600)
-        prune_transcodes()
-
-
-threading.Thread(target=_prune_loop, daemon=True).start()
-
-
 @app.route("/api/cache/clear", methods=["POST"])
 def api_cache_clear():
-    """Delete cached files on demand: converted videos or thumbnails."""
+    """Delete cached files on demand: thumbnails."""
     what = (request.get_json(silent=True) or {}).get("what")
     freed, n = 0, 0
-    if what == "transcoded":
-        for path, size, mtime in _transcode_files():
-            if time.time() - mtime < 120:
-                continue  # skip a copy that is being watched right now
-            try:
-                os.remove(path); freed += size; n += 1
-            except OSError:
-                pass
-    elif what == "thumbs":
+    if what == "thumbs":
         for e in os.scandir(THUMB_DIR):
             try:
                 size = e.stat().st_size
@@ -1372,6 +1300,7 @@ def api_cache_clear():
         _wake_warmer()  # rebuild them in the background
     else:
         return {"ok": False, "error": "unknown cache"}, 400
+    disk_stats(fresh=True)
     return {"ok": True, "freed": fmt_size(freed), "files": n, "stats": library_stats()}
 
 
@@ -1383,15 +1312,66 @@ def library_stats() -> dict:
         "videos": len({v["id"] for v in items}),
         "folders": len(shown),
         "size": fmt_size(sum(v["size"] for v in {v["id"]: v for v in items}.values())),
-        "thumbs": len(os.listdir(THUMB_DIR)),
-        "captions": len(glob.glob(os.path.join(AUTO_SUBS_DIR, "*.vtt"))),
-        "cache": fmt_size(_dir_size(TRANS_DIR) + _dir_size(THUMB_DIR)),
-        "transcoded": fmt_size(sum(f[1] for f in _transcode_files())),
-        "transcodedCount": len(_transcode_files()),
-        "thumbsSize": fmt_size(_dir_size(THUMB_DIR)),
-        "models": fmt_size(_dir_size(os.path.join(BASE, "models"))),
         "scanned": rel_time(_scan_state["at"]) if _scan_state["at"] else "never",
+        **disk_stats(),
     }
+
+
+# Summing thousands of files on the host-mounted data folder takes seconds, so the
+# numbers are kept in memory and refreshed in the background (Settings opens at once).
+_disk = {"at": 0.0, "v": None, "busy": False}
+_DISK_KEYS = ("thumbs", "captions", "thumbsSize", "models")
+
+
+def _scan_dir(path: str) -> tuple[int, int]:
+    n = total = 0
+    try:
+        for e in os.scandir(path):
+            try:
+                if e.is_file():
+                    n += 1; total += e.stat().st_size
+                elif e.is_dir():
+                    sn, st = _scan_dir(e.path); n += sn; total += st
+            except OSError:
+                pass
+    except OSError:
+        pass
+    return n, total
+
+
+def _refresh_disk() -> None:
+    try:
+        tn, ts = _scan_dir(THUMB_DIR)
+        _disk["v"] = {
+            "thumbs": tn, "thumbsSize": fmt_size(ts),
+            "captions": len(glob.glob(os.path.join(AUTO_SUBS_DIR, "*.vtt"))),
+            "models": fmt_size(_scan_dir(os.path.join(BASE, "models"))[1]),
+        }
+        _disk["at"] = time.time()
+    finally:
+        _disk["busy"] = False
+
+
+def disk_stats(fresh: bool = False, max_age: float = 60) -> dict:
+    """Cached disk numbers; "…" until the first count finishes. fresh=True recounts now."""
+    if fresh:
+        _disk["busy"] = True
+        _refresh_disk()
+    elif time.time() - _disk["at"] > max_age and not _disk["busy"]:
+        _disk["busy"] = True
+        threading.Thread(target=_refresh_disk, daemon=True).start()
+    return dict(_disk["v"] or {k: "…" for k in _DISK_KEYS})
+
+
+@app.route("/api/stats")
+def api_stats():
+    if _disk["v"] is None:  # first count still running: wait for it
+        for _ in range(300):
+            if _disk["v"] is not None:
+                break
+            disk_stats()
+            time.sleep(0.1)
+    return library_stats()
 
 
 def lan_url() -> str:
@@ -1462,6 +1442,8 @@ def api_settings():
             if k == "view" and v not in ("grid", "list"):
                 continue
             if k == "whisperModel" and v not in WHISPER_MODELS:
+                continue
+            if k == "topTasks" and v not in ("auto", "always", "never"):
                 continue
             cur[k] = v
     save_config(cfg)
@@ -1619,17 +1601,11 @@ def remove_folder():
 
 
 def _clear_caches(vid: str) -> None:
-    for p in (os.path.join(THUMB_DIR, vid + ".jpg"),
-              os.path.join(STORY_DIR, vid + ".jpg"), os.path.join(STORY_DIR, vid + ".json"),
-              os.path.join(TRANS_DIR, vid + ".mp4"),
-              os.path.join(TRANS_DIR, vid + ".webm")):
-        try:
-            if os.path.exists(p):
-                os.remove(p)
-        except OSError:
-            pass
-    for p in (glob.glob(os.path.join(TRANS_DIR, glob.escape(vid) + ".*.vtt")) +
-              glob.glob(os.path.join(AUTO_SUBS_DIR, glob.escape(vid) + ".*"))):
+    try:
+        os.remove(os.path.join(THUMB_DIR, vid + ".jpg"))
+    except OSError:
+        pass
+    for p in glob.glob(os.path.join(AUTO_SUBS_DIR, glob.escape(vid) + ".*")):
         try:
             os.remove(p)
         except OSError:
@@ -1709,7 +1685,7 @@ def rename(vid):
 
 @app.route("/delete/<vid>", methods=["POST"])
 def delete_video(vid):
-    """Delete the video file from disk (and its cached thumb/transcode)."""
+    """Delete the video file from disk (and its cached thumb)."""
     r = get_rec(vid)
     if not r:
         return {"ok": False, "error": "not found"}, 404

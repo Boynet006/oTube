@@ -1,0 +1,18 @@
+{# background-tasks status (top bar); see Settings → Top bar #}
+<div class="tasks-ctl" id="tasks-ctl" hidden>
+  <button type="button" class="tasks-btn" id="tasks-btn" aria-haspopup="dialog" aria-expanded="false" aria-controls="tasks-pop">
+    <svg class="tk-ring" viewBox="0 0 36 36" width="22" height="22" aria-hidden="true">
+      <circle class="tk-ring__bg" cx="18" cy="18" r="15"/><circle class="tk-ring__fg" cx="18" cy="18" r="15"/>
+    </svg>
+    <span class="tk-label"><b class="tk-l1"></b><span class="tk-l2"></span></span>
+  </button>
+  <div class="tasks-pop" id="tasks-pop" role="dialog" aria-label="Background tasks" hidden>
+    <div class="tk-head"><span>Background tasks</span><span class="tk-sum"></span></div>
+    <section class="tk-row" data-task="thumbs">
+      <div class="tk-top"><b>Thumbnails</b><span class="tk-chip"></span></div>
+      <div class="tk-bar"><i></i></div>
+      <div class="tk-line tk-count"></div>
+    </section>
+    <a class="tk-foot" href="/settings#sec-tools">More in Settings → Library tools</a>
+  </div>
+</div>

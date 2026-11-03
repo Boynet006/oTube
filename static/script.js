@@ -51,6 +51,69 @@
     });
   }
   window.otubeConfirm = confirmDialog;
+
+  // "Change thumbnail…": pick a frame (start / middle / any of 12 points / the paused frame)
+  function thumbDialog(id, isWatch) {
+    var prev = document.activeElement;
+    var player = isWatch ? document.getElementById("player") : null;
+    var ov = document.createElement("div");
+    ov.className = "modal-overlay pin-overlay";
+    ov.innerHTML = '<div class="modal pin-modal thumb-modal" role="dialog" aria-modal="true" aria-labelledby="tp-t">' +
+      '<h2 class="pin-title" id="tp-t">Choose a thumbnail</h2>' +
+      '<p class="pin-text">Pick a frame. It shows everywhere this video appears.</p>' +
+      '<div class="tp-grid" role="listbox" aria-label="Frames"><p class="pin-text">Loading frames…</p></div>' +
+      '<div class="pin-actions confirm-actions"><button type="button" class="pin-btn tp-default">Use default</button>' +
+      '<span class="pin-spacer"></span><button type="button" class="pin-btn tp-cancel">Cancel</button>' +
+      '<button type="button" class="pin-btn pin-ok cf-safe tp-save" disabled>Save</button></div></div>';
+    document.body.appendChild(ov);
+    var grid = ov.querySelector(".tp-grid"), save = ov.querySelector(".tp-save"), chosen = null;
+    function close() { ov.remove(); document.removeEventListener("keydown", key, true); if (prev && prev.focus) prev.focus(); }
+    function key(e) { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(); } }
+    document.addEventListener("keydown", key, true);
+    ov.addEventListener("mousedown", function (e) { if (e.target === ov) close(); });
+    ov.querySelector(".tp-cancel").addEventListener("click", close);
+    function apply(t) {
+      save.disabled = true;
+      fetch("/api/thumb/" + id, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ t: t }) })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          if (!d.ok) throw 0;
+          // swap every image of this video on the page to the new one
+          document.querySelectorAll('img[src^="/thumb/' + id + '"]').forEach(function (im) { im.src = d.src; });
+          if (player) player.setAttribute("poster", d.src);
+          close(); note(t == null ? "Thumbnail reset to default" : "Thumbnail updated");
+        })
+        .catch(function () { save.disabled = false; note("Couldn't change the thumbnail"); });
+    }
+    ov.querySelector(".tp-default").addEventListener("click", function () { apply(null); });
+    save.addEventListener("click", function () { if (chosen != null) apply(chosen); });
+    fetch("/api/thumb/" + id).then(function (r) { return r.json(); }).then(function (d) {
+      var dur = d.dur || 0, opts = [];
+      if (player && player.currentTime > 0.5) opts.push({ t: player.currentTime, label: "Current frame" });
+      if (d.t != null) opts.push({ t: d.t, label: "Current thumbnail" });
+      opts.push({ t: dur / 2, label: "Middle" });
+      for (var i = 1; i <= 11; i++) { var t = dur * i / 12; if (i !== 6) opts.push({ t: t }); }
+      grid.innerHTML = "";
+      opts.forEach(function (o) {
+        var b = document.createElement("button");
+        b.type = "button"; b.className = "tp-opt"; b.setAttribute("role", "option");
+        b.innerHTML = '<img loading="lazy" alt=""><span class="tp-time"></span>' + (o.label ? '<span class="tp-label"></span>' : "");
+        b.querySelector("img").src = "/thumb/" + id + "/frame?t=" + o.t.toFixed(1);
+        b.querySelector(".tp-time").textContent = (function (s) { s = Math.floor(s); var h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60;
+          return (h ? h + ":" + (m < 10 ? "0" : "") : "") + m + ":" + (x < 10 ? "0" : "") + x; })(o.t);
+        if (o.label) b.querySelector(".tp-label").textContent = o.label;
+        b.addEventListener("click", function () {
+          grid.querySelectorAll(".tp-opt").forEach(function (x) { x.classList.remove("on"); x.setAttribute("aria-selected", "false"); });
+          b.classList.add("on"); b.setAttribute("aria-selected", "true");
+          chosen = o.t; save.disabled = false;
+        });
+        b.addEventListener("dblclick", function () { apply(o.t); });
+        grid.appendChild(b);
+      });
+      if (d.t == null) ov.querySelector(".tp-default").disabled = true;
+      var first = grid.querySelector(".tp-opt"); if (first) first.focus();
+    }).catch(function () { grid.innerHTML = '<p class="pin-text">Couldn\u2019t read this video.</p>'; });
+  }
   var TRASH = '<svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true"><path fill="currentColor" d="M6 19a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>';
   var FOLDER_X = '<svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true"><path fill="currentColor" d="M10 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8zm4.6 6 1.4 1.4-1.6 1.6 1.6 1.6-1.4 1.4-1.6-1.6-1.6 1.6-1.4-1.4 1.6-1.6-1.6-1.6 1.4-1.4 1.6 1.6z"/></svg>';
   var LIST_X = '<svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true"><path fill="currentColor" d="M3 6h12v2H3zm0 4h12v2H3zm0 4h8v2H3zm11.4 1.4L16 13.8l2 2 2-2 1.4 1.4-2 2 2 2-1.4 1.4-2-2-2 2-1.4-1.4 2-2z"/></svg>';
@@ -485,7 +548,7 @@
       }
     }
 
-    // --- Hover-to-play preview (YouTube-style), native formats only ---
+    // --- Hover-to-play preview (YouTube-style); MKV/AVI/TS load piece by piece (stream.js) ---
     // While previewing: a seek bar along the bottom (click or drag), a mute
     // toggle, and clicking the video opens it at the preview's position.
     var MUTE_KEY = "otube.previewMuted";
@@ -493,42 +556,15 @@
     var SPK_OFF = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M16.5 12A4.5 4.5 0 0 0 14 8v2.18l2.45 2.45c.03-.2.05-.41.05-.63zM19 12c0 .94-.2 1.82-.54 2.64l1.51 1.51A8.8 8.8 0 0 0 21 12a9 9 0 0 0-7-8.77v2.06A7 7 0 0 1 19 12zM4.27 3 3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06a9 9 0 0 0 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4 9.91 6.09 12 8.18V4z"/></svg>';
     function pfmt(t) { t = Math.max(0, Math.floor(t || 0)); var h = Math.floor(t / 3600), m = Math.floor(t % 3600 / 60), x = t % 60;
       return (h ? h + ":" + (m < 10 ? "0" : "") : "") + m + ":" + (x < 10 ? "0" : "") + x; }
-    // Storyboard "player": frames from the sprite sheet with the same API as <video>,
-    // used for MKV/AVI/... until (or instead of) a playable copy.
-    function storyboardPlayer(sb) {
-      var el = document.createElement("div"), t = 0, timer = null;
-      el.className = "preview preview--sb";
-      el.style.backgroundImage = "url(" + sb.src + ")";
-      var dur = sb.count * sb.interval;
-      function draw() {
-        var w = el.offsetWidth || 320, h = el.offsetHeight || 180;
-        var i = Math.min(sb.count - 1, Math.floor(t / sb.interval));
-        el.style.backgroundSize = (sb.cols * w) + "px " + (sb.rows * h) + "px";
-        el.style.backgroundPosition = (-(i % sb.cols) * w) + "px " + (-Math.floor(i / sb.cols) * h) + "px";
-        el.dispatchEvent(new Event("timeupdate"));
-      }
-      Object.defineProperty(el, "duration", { get: function () { return dur; } });
-      Object.defineProperty(el, "currentTime", { get: function () { return t; }, set: function (v) { t = Math.max(0, Math.min(dur, v)); draw(); } });
-      el.muted = true; el.isStoryboard = true;
-      el.play = function () {   // a frame every 0.6s, skipping ahead ~1/40 of the video
-        clearInterval(timer);
-        timer = setInterval(function () { t = (t + Math.max(sb.interval, dur / 40)) % dur; draw(); }, 600);
-        return Promise.resolve();
-      };
-      el.pause = function () { clearInterval(timer); };
-      var rm = el.remove.bind(el);
-      el.remove = function () { clearInterval(timer); rm(); };
-      setTimeout(draw, 0);
-      return el;
-    }
     if ((window.OTUBE || {}).hoverPreview !== false) grid.querySelectorAll('.card').forEach(function (card) {
       var thumb = card.querySelector(".thumb");
       var id = card.getAttribute("data-id");
-      var timer = null, vid = null, ui = null, dragging = false, baseHref = thumb.getAttribute("href"), hovering = false, poll = null;
+      var timer = null, vid = null, ui = null, dragging = false, baseHref = thumb.getAttribute("href"), live = null;
       var native = card.getAttribute("data-native") === "1";
       function stop() {
-        clearTimeout(timer); clearTimeout(poll);
-        if (vid) { try { vid.pause(); } catch (e) {} vid.remove(); vid = null; }
+        clearTimeout(timer);
+        if (live) { live.destroy(); live = null; }
+        if (vid) { try { vid.pause(); } catch (e) {} vid.removeAttribute("src"); vid.remove(); vid = null; }
         if (ui) { ui.remove(); ui = null; }
         card.classList.remove("previewing");
         thumb.setAttribute("href", baseHref);
@@ -542,7 +578,7 @@
         thumb.appendChild(ui);
         var bar = ui.querySelector(".pv-bar"), fill = ui.querySelector(".pv-fill"), knob = ui.querySelector(".pv-knob"),
             tip = ui.querySelector(".pv-tip"), time = ui.querySelector(".pv-time"), mute = ui.querySelector(".pv-mute");
-        function syncMute() { mute.hidden = !!vid.isStoryboard; mute.innerHTML = vid.muted ? SPK_OFF : SPK_ON; mute.title = vid.muted ? "Unmute" : "Mute"; }
+        function syncMute() { mute.innerHTML = vid.muted ? SPK_OFF : SPK_ON; mute.title = vid.muted ? "Unmute" : "Mute"; }
         syncMute();
         mute.addEventListener("click", function (e) {
           e.preventDefault(); e.stopPropagation();
@@ -583,57 +619,33 @@
         // (only the bar here: stopping clicks in the capture phase would also block the mute button)
         ui.addEventListener("click", function (e) { if (e.target.closest(".pv-bar")) { e.preventDefault(); e.stopPropagation(); } }, true);
       }
-      function startVideo(src, at) {
-        var old = vid;
+      function startVideo() {
         vid = document.createElement("video");
         vid.className = "preview";
         var m = "1"; try { m = localStorage.getItem(MUTE_KEY) || "1"; } catch (e) {}
         vid.muted = m !== "0"; vid.playsInline = true; vid.loop = true; vid.preload = "auto";
-        vid.src = src;
+        // start ~15% in (at most 10 s), like YouTube
+        var d = parseFloat(card.getAttribute("data-dur")) || 0, at = d > 15 ? Math.min(10, d * 0.15) : 0;
+        if (native) vid.src = "/stream/" + id;
+        else if (window.otubeStream) live = window.otubeStream(vid, id, { start: at });
         thumb.appendChild(vid);
         card.classList.add("previewing");
         vid.addEventListener("loadeddata", function () {
-          try {
-            if (at != null) vid.currentTime = at;
-            else if (vid.duration && vid.duration > 15) vid.currentTime = Math.min(10, vid.duration * 0.15);
-          } catch (e) {}
+          try { if (at && Math.abs(vid.currentTime - at) > 1) vid.currentTime = at; } catch (e) {}
           vid.classList.add("show");
-          if (old) { old.remove(); if (ui) { ui.remove(); ui = null; } }   // storyboard -> real video
           vid.play().catch(function () { if (vid && !vid.muted) { vid.muted = true; vid.play().catch(function () {}); } });
           if (!ui) build();
-        });
-      }
-      function startStoryboard(sb) {
-        vid = storyboardPlayer(sb);
-        thumb.appendChild(vid);
-        card.classList.add("previewing");
-        vid.currentTime = Math.min(10, vid.duration * 0.15);
-        requestAnimationFrame(function () { if (vid) { vid.classList.add("show"); vid.play(); } });
-        build();
-      }
-      function askServer() {   // MKV/AVI...: playable copy ready? else storyboard while it's prepared
-        fetch("/api/preview/" + id).then(function (r) { return r.json(); }).then(function (d) {
-          if (!hovering) return;
-          if (d.src) { startVideo(d.src, vid && vid.isStoryboard ? vid.currentTime : null); return; }
-          var sb = d.storyboard || {};
-          if (sb.ready && !vid) startStoryboard(sb);
-          if (d.preparing || !sb.ready) poll = setTimeout(askServer, 1500);   // keep checking while hovered
-        }).catch(function () {});
+        }, { once: true });
       }
       card.addEventListener("mouseenter", function () {
-        if (grid.classList.contains("selecting")) return;
-        hovering = true;
-        timer = setTimeout(function () {
-          if (native) startVideo("/stream/" + id);
-          else askServer();
-        }, 550);
+        timer = setTimeout(startVideo, 550);
       });
-      card.addEventListener("mouseleave", function () { hovering = false; if (!dragging) stop(); });
+      card.addEventListener("mouseleave", function () { if (!dragging) stop(); });
     });
   }
 
   // --- Multi-select (Google Photos / Gmail style) ---
-  // Hover a card -> checkbox. Once anything is selected, clicking a card toggles it,
+  // Hover a card -> checkbox. Clicking the checkbox toggles it (clicking the card plays),
   // Shift+click selects a range, Ctrl/Cmd+A selects all visible, Esc clears.
   var selbar = document.getElementById("selbar");
   if (grid && selbar) {
@@ -671,8 +683,8 @@
     }
     grid.addEventListener("click", function (e) {
       var card = e.target.closest(".card");
-      if (!card || e.target.closest(".card__more")) return;
-      if (e.target.closest(".card__check") || selected.length) {
+      if (!card) return;
+      if (e.target.closest(".card__check")) {
         e.preventDefault(); e.stopPropagation();
         toggleCard(card, e.shiftKey);
       }
@@ -1148,6 +1160,8 @@
         var nowDone = !current_done;
         markWatched([id], nowDone);
         note(nowDone ? "Marked as watched" : "Marked as unwatched");
+      } else if (act === "thumb") {
+        thumbDialog(id, isWatch);
       } else if (act === "rename") {
         var nn = window.prompt("Rename video to:", name);
         if (nn && nn.trim() && nn.trim() !== name) {
@@ -1688,7 +1702,7 @@
   document.addEventListener("click", function (e) {
     if (!on || e.defaultPrevented || e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
     var a = e.target.closest('a[href^="/watch/"]');
-    if (!a || a.closest(".mini") || a.closest(".grid.selecting")) return;
+    if (!a || a.closest(".mini")) return;
     e.preventDefault();
     open(a.getAttribute("href"), 0, dock.classList.contains("mini--large"));
   });
@@ -1696,4 +1710,65 @@
   // keep playing across page changes in this tab (folder chips, sort, search...)
   var prev = sget(STATE_KEY);
   if (prev && prev.path) open(prev.path, prev.t, prev.large);
+})();
+
+// keep the sticky content bar right under the (variable-height) sticky chips
+(function () {
+  var chips = document.querySelector(".chips-sticky");
+  if (!chips) return;
+  function setH() { document.documentElement.style.setProperty("--chips-h", chips.offsetHeight + "px"); }
+  setH();
+  if (window.ResizeObserver) new ResizeObserver(setH).observe(chips);
+})();
+
+
+// ---- Background-tasks status in the top bar (thumbnails) ----
+(function () {
+  var ctl = document.getElementById("tasks-ctl");
+  if (!ctl) return;
+  var bar = document.querySelector(".topbar"), btn = document.getElementById("tasks-btn"), pop = document.getElementById("tasks-pop");
+  var fg = ctl.querySelector(".tk-ring__fg"), C = 2 * Math.PI * 15;
+  var l1 = ctl.querySelector(".tk-l1"), l2 = ctl.querySelector(".tk-l2");
+  var timer = null, last = null, open = false;
+  fg.style.strokeDasharray = C;
+  function mode() { return bar.getAttribute("data-tasks") || "auto"; }
+  function row(n) { return pop.querySelector('[data-task="' + n + '"]'); }
+  function pct(a, b) { return b ? Math.floor(a / b * 100) : 100; }
+  function chip(r, cls, text) { var c = r.querySelector(".tk-chip"); c.className = "tk-chip " + cls; c.textContent = text; }
+  function render(d) {
+    last = d;
+    var th = d.thumbs, active = th.running, m = mode(), left = th.total - th.done;
+    ctl.hidden = m === "never" || !(active || m === "always" || open);
+    ctl.classList.toggle("busy", active);
+    var t1 = active ? "Thumbnails " + pct(th.done, th.total) + "%" : left ? "Thumbnails" : "All ready";
+    var t2 = left ? th.done + "/" + th.total : "✓";
+    fg.style.strokeDashoffset = C * (1 - (th.total ? th.done / th.total : 1));
+    ctl.classList.toggle("done", !active && !left);
+    l1.textContent = t1; l2.textContent = t2;
+    btn.title = "Background tasks: " + t1 + " (" + t2 + "). Click for details";
+    var tr = row("thumbs");
+    tr.querySelector(".tk-bar i").style.width = pct(th.done, th.total) + "%";
+    chip(tr, active ? "run" : left ? "idle" : "ok", active ? "Running" : left ? "Waiting" : "Done");
+    tr.querySelector(".tk-count").textContent = th.done + " of " + th.total + " ready" + (left ? " · " + left + " to go" : "");
+    pop.querySelector(".tk-sum").textContent = active ? "Working…" : "Idle";
+    schedule(active || open ? 2000 : 12000);
+  }
+  function schedule(ms) { clearTimeout(timer); timer = setTimeout(poll, ms); }
+  function poll() {
+    if (mode() === "never") { ctl.hidden = true; schedule(30000); return; }
+    if (document.hidden) { schedule(10000); return; }
+    fetch("/api/tasks").then(function (r) { return r.json(); }).then(render).catch(function () { schedule(15000); });
+  }
+  window.otubeTasks = poll;
+  if (mode() === "always") { ctl.hidden = false; l1.textContent = "Background tasks"; l2.textContent = "Checking…"; }
+  function setOpen(v) {
+    open = v; pop.hidden = !v; btn.setAttribute("aria-expanded", v ? "true" : "false");
+    ctl.classList.toggle("open", v);
+    if (!v && last) render(last);
+  }
+  btn.addEventListener("click", function (e) { e.stopPropagation(); setOpen(pop.hidden); if (open) poll(); });
+  document.addEventListener("click", function (e) { if (open && !ctl.contains(e.target)) setOpen(false); });
+  document.addEventListener("keydown", function (e) { if (open && e.key === "Escape") { setOpen(false); btn.focus(); } });
+  document.addEventListener("visibilitychange", function () { if (!document.hidden) poll(); });
+  poll();
 })();

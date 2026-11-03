@@ -28,6 +28,13 @@
   if (prefs.ccOn === undefined) prefs.ccOn = !!S.captionsOn;
   function savePrefs() { writeJSON(PREF_KEY, prefs); }
 
+  // MKV/AVI/TS…: loaded piece by piece (stream.js), starting where playback will resume
+  if (video.getAttribute("data-native") === "0" && window.otubeStream) {
+    var at0 = parseFloat(new URLSearchParams(location.search).get("t")), e0 = readJSON(PROG_KEY, {})[vid];
+    if (!(at0 > 0) && S.resume !== false && e0 && e0.t > 5 && (!e0.d || e0.t < e0.d - 10)) at0 = e0.t;
+    window.otubeStream(video, vid, { start: at0 > 0 ? at0 : 0 });
+  }
+
   // ---------- icons ----------
   function svg(d) { return '<svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path fill="currentColor" d="' + d + '"/></svg>'; }
   var I = {
@@ -219,31 +226,36 @@
     var r = scrub.getBoundingClientRect();
     return Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
   }
-  // seek preview: a small frame from the storyboard sprite above the time
-  var frameEl = scrub.querySelector(".p-scrub__frame"), sb = null;
-  function loadStoryboard(tries) {
-    fetch("/storyboard/" + vid + ".json").then(function (r) { return r.json(); }).then(function (d) {
-      if (d.ready) {
-        sb = d;
-        sizeFrame();
-        frameEl.style.backgroundImage = "url(" + d.src + ")";
-        new Image().src = d.src;  // warm the cache
-      } else if (tries < 40) {
-        setTimeout(function () { loadStoryboard(tries + 1); }, 3000);  // being built in the background
-      }
-    }).catch(function () {});
-  }
+  // seek preview: a frame grabbed from the video at the hovered time (made on request,
+  // ~0.1 s, nothing stored). One request at a time; the latest position wins.
+  var frameEl = scrub.querySelector(".p-scrub__frame"), fw = 0, frameWant = null, frameBusy = false;
   // YouTube-like size: about a quarter of the player's width (160-480px), 16:9
   function sizeFrame() {
-    if (!sb) return;
-    sb.dw = Math.round(Math.min(480, Math.max(160, wrap.offsetWidth * 0.25)));
-    sb.dh = Math.round(sb.dw * sb.h / sb.w);
-    frameEl.style.width = sb.dw + "px"; frameEl.style.height = sb.dh + "px";
-    frameEl.style.backgroundSize = (sb.cols * sb.dw) + "px " + (sb.rows * sb.dh) + "px";
+    fw = Math.round(Math.min(480, Math.max(160, wrap.offsetWidth * 0.25)));
+    frameEl.style.width = fw + "px"; frameEl.style.height = Math.round(fw * 9 / 16) + "px";
   }
+  sizeFrame();
   window.addEventListener("resize", sizeFrame);
   document.addEventListener("fullscreenchange", function () { setTimeout(sizeFrame, 50); });
-  loadStoryboard(0);
+  function frameAt(t) {
+    var step = Math.max(2, dur() / 200);   // snap, so moving back and forth reuses cached frames
+    var url = "/thumb/" + vid + "/frame?fast=1&t=" + (Math.floor(t / step) * step).toFixed(1);
+    if (url === frameWant) return;
+    frameWant = url;
+    if (!frameBusy) loadFrame(url);
+  }
+  function loadFrame(url) {
+    frameBusy = true;
+    var im = new Image();
+    im.onload = function () {
+      frameEl.style.backgroundImage = 'url("' + url + '")';
+      frameEl.hidden = false;
+      next();
+    };
+    im.onerror = next;
+    function next() { frameBusy = false; if (frameWant !== url) loadFrame(frameWant); }
+    im.src = url;
+  }
   function previewAt(ratio) {
     var pct = ratio * 100;
     hoverBar.style.width = pct + "%";
@@ -251,12 +263,9 @@
     var r = scrub.getBoundingClientRect(), tw = tip.offsetWidth / 2;
     var x = Math.min(r.width - tw, Math.max(tw, ratio * r.width));
     tip.style.left = x + "px";
-    if (sb && dur()) {
-      var i = Math.min(sb.count - 1, Math.floor(ratio * dur() / sb.interval));
-      frameEl.style.backgroundPosition = (-(i % sb.cols) * sb.dw) + "px " + (-Math.floor(i / sb.cols) * sb.dh) + "px";
-      var fw = sb.dw / 2;
-      frameEl.style.left = Math.min(r.width - fw, Math.max(fw, ratio * r.width)) + "px";
-      frameEl.hidden = false;
+    if (dur() && isFinite(ratio)) {
+      frameAt(ratio * dur());
+      frameEl.style.left = Math.min(r.width - fw / 2, Math.max(fw / 2, ratio * r.width)) + "px";
     }
   }
   scrub.addEventListener("pointermove", function (e) {

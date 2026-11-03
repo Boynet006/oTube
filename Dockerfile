@@ -11,7 +11,7 @@ COPY app.py .
 COPY templates/ templates/
 COPY static/ static/
 
-# config.json, duration cache, thumbs and transcodes live here (mount a volume)
+# config.json, duration cache, and thumbs live here (mount a volume)
 # OTUBE_WHISPER_MODEL: tiny | base | small | medium | large-v3 (bigger = better, slower)
 ENV OTUBE_DATA=/data PYTHONUNBUFFERED=1 OTUBE_WHISPER_MODEL=large-v3-turbo
 VOLUME /data

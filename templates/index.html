@@ -19,7 +19,7 @@
     r.style.setProperty("--app-warm", (d.n ? (d.w == null ? 50 : d.w) / 100 * 0.45 : 0).toFixed(3)); if (d.n) r.classList.add("app-night"); } catch (e) {} })();</script>
 </head>
 <body>
-  <header class="topbar">
+  <header class="topbar{% for k in ('topBrightness', 'topMini', 'topMode') %}{% if not app_settings[k] %} hide-{{ k }}{% endif %}{% endfor %}" data-tasks="{{ app_settings.topTasks }}">
     <div class="topbar__left">
       <button id="menu-toggle" class="icon-btn" title="Menu" aria-label="Menu">
         <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M3 6h18v2H3V6m0 5h18v2H3v-2m0 5h18v2H3v-2Z"/></svg>
@@ -36,6 +36,7 @@
       </button>
     </div>
     <div class="topbar__right">
+      {% include "_tasks.html" %}
       <div class="display-ctl">
         <button type="button" class="icon-btn" id="display-btn" aria-haspopup="dialog" aria-expanded="false" title="Display: brightness &amp; night light"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10zM2 13h2a1 1 0 0 0 0-2H2a1 1 0 0 0 0 2zm18 0h2a1 1 0 0 0 0-2h-2a1 1 0 0 0 0 2zM11 2v2a1 1 0 0 0 2 0V2a1 1 0 0 0-2 0zm0 18v2a1 1 0 0 0 2 0v-2a1 1 0 0 0-2 0zM5.99 4.58a1 1 0 0 0-1.41 1.41l1.06 1.06a1 1 0 0 0 1.41-1.41L5.99 4.58zm12.37 12.37a1 1 0 0 0-1.41 1.41l1.06 1.06a1 1 0 0 0 1.41-1.41l-1.06-1.06zm1.06-10.96a1 1 0 0 0-1.41-1.41l-1.06 1.06a1 1 0 0 0 1.41 1.41l1.06-1.06zM7.05 18.36a1 1 0 0 0-1.41-1.41l-1.06 1.06a1 1 0 0 0 1.41 1.41l1.06-1.06z"/></svg></button>
       </div>
@@ -161,7 +162,7 @@
              data-native="{{ '1' if v.native else '0' }}" data-name="{{ v.title }}" data-path="{{ v.host_path }}" data-ext="{{ v.ext[1:] }}">
           <button type="button" class="card__check" aria-label="Select video" aria-pressed="false" title="Select"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg></button>
           <a class="thumb" href="/watch/{{ v.id }}{{ '?list=' ~ playlist.id if playlist else '' }}">
-            <img class="thumb__img" loading="lazy" src="/thumb/{{ v.id }}" alt="">
+            <img class="thumb__img" loading="lazy" src="{{ thumb_url(v.id) }}" alt="">
             <span class="badge">{{ v.duration }}</span>
             <span class="ext-badge {{ 'conv' if not v.native }}" title="{{ v.ext[1:]|upper }}{{ ' (converted to play in the browser)' if not v.native }}">{{ v.ext[1:]|upper }}</span>
             <span class="watched"><span class="watched__bar"></span></span>
@@ -226,10 +227,12 @@
     <button data-act="open">Open in player</button>
     <button data-act="copy">Copy path</button>
     <button data-act="rename">Rename…</button>
+    <button data-act="thumb">Change thumbnail…</button>
     <button data-act="mark">Mark as watched</button>
     <button data-act="delete" class="danger">Delete from disk</button>
   </div>
 
+  <script src="{{ url_for('static', filename='stream.js') }}"></script>
   <script src="{{ url_for('static', filename='script.js') }}"></script>
 </body>
 </html>
