@@ -48,7 +48,7 @@ if not os.path.exists(_KEY_PATH):
 with open(_KEY_PATH, "rb") as _f:
     app.secret_key = _f.read()
 PLAYLISTS_PATH = os.path.join(BASE, "playlists.json")  # [{id, name, items: [vid, ...]}]
-DUR_CACHE_PATH = os.path.join(BASE, "duration_cache.json")  # persisted path -> [secs, mtime]
+DUR_CACHE_PATH = os.path.join(BASE, "duration_cache.json")  # persisted path -> [secs, mtime, media info?]
 THUMB_DIR = os.path.join(BASE, "thumbs")
 AUTO_SUBS_DIR = os.path.join(BASE, "subs")  # speech-to-text captions: <vid>.vtt + <vid>.json
 os.makedirs(THUMB_DIR, exist_ok=True)
@@ -66,7 +66,7 @@ VIDEO_EXTS = NATIVE_EXTS | NONNATIVE_EXTS
 FFMPEG, FFPROBE = "ffmpeg", "ffprobe"
 
 _rec_cache: dict[str, dict] = {}            # id -> record
-_dur_cache: dict[str, tuple] = {}           # path -> (seconds, mtime)
+_dur_cache: dict[str, tuple] = {}           # path -> (seconds, mtime[, media_info dict])
 _dur_dirty = False                          # unsaved duration-cache entries?
 
 
@@ -75,7 +75,7 @@ def _load_dur_cache() -> None:
         with open(DUR_CACHE_PATH, "r", encoding="utf-8") as f:
             raw = json.load(f)
         for k, v in raw.items():
-            _dur_cache[k] = (float(v[0]), float(v[1]))
+            _dur_cache[k] = (float(v[0]), float(v[1])) + ((v[2],) if len(v) > 2 and isinstance(v[2], dict) else ())
     except Exception:
         pass
 
@@ -83,7 +83,7 @@ def _load_dur_cache() -> None:
 def _save_dur_cache() -> None:
     try:
         with open(DUR_CACHE_PATH, "w", encoding="utf-8") as f:
-            json.dump({k: [v[0], v[1]] for k, v in _dur_cache.items()}, f)
+            json.dump({k: list(v) for k, v in _dur_cache.items()}, f)
     except Exception:
         pass
 
@@ -405,6 +405,12 @@ def _warm_once() -> None:
             n += 1
             if n % 25 == 0:
                 _save_dur_cache(); _dur_dirty = False
+    for r in items:   # codecs of MKV/AVI/TS…, so even their first play starts without a probe
+        if not r["native"] and not _warm_event.is_set():
+            media_info(r)
+            n += 1
+            if n % 50 == 0 and _dur_dirty:
+                _save_dur_cache(); _dur_dirty = False
     if _dur_dirty:
         _save_dur_cache(); _dur_dirty = False
     for r in items:
@@ -586,8 +592,14 @@ _media: dict[str, dict] = {}   # vid -> {mtime, v, a, start}: codecs + first tim
 
 
 def media_info(r: dict) -> dict:
+    global _dur_dirty
     m = _media.get(r["id"])
     if m and m["mtime"] == r["mtime"]:
+        return m
+    c = _dur_cache.get(r["path"])
+    if c and len(c) > 2 and abs(c[1] - r["mtime"]) < 1:   # probed in an earlier run
+        m = dict(c[2], mtime=r["mtime"])
+        _media[r["id"]] = m
         return m
     v = a = ""
     start = 0.0
@@ -605,17 +617,26 @@ def media_info(r: dict) -> dict:
         pass
     m = {"mtime": r["mtime"], "v": v.lower(), "a": a.lower(), "start": start}
     _media[r["id"]] = m
+    if v:
+        _dur_cache[r["path"]] = (probe_duration(r["path"], r["mtime"]), r["mtime"],
+                                 {"v": m["v"], "a": m["a"], "start": start})
+        _dur_dirty = True
     return m
 
 
 COPY_VIDEO = {"h264": "avc1.640029", "vp9": "vp09.00.40.08", "av1": "av01.0.08M.08"}  # codec -> MSE codec string
+HEVC_CODEC = "hvc1.1.6.L150.90"
 
 
-def live_plan(m: dict) -> tuple[list, str, bool]:
-    """(ffmpeg codec args, MIME type for Media Source, video copied untouched?)"""
-    copy = m["v"] in COPY_VIDEO
-    args = ["-c:v", "copy"] if copy else ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p"]
-    codecs = [COPY_VIDEO.get(m["v"], "avc1.640029")]
+def live_plan(m: dict, hevc: bool = False) -> tuple[list, str, bool]:
+    """(ffmpeg codec args, MIME type for Media Source, video copied untouched?)
+    hevc: the browser decodes H.265 (Chrome/Edge/Safari with hardware support)."""
+    if hevc and m["v"] == "hevc":
+        args, codecs, copy = ["-c:v", "copy", "-tag:v", "hvc1"], [HEVC_CODEC], True
+    else:
+        copy = m["v"] in COPY_VIDEO
+        args = ["-c:v", "copy"] if copy else ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p"]
+        codecs = [COPY_VIDEO.get(m["v"], "avc1.640029")]
     if m["a"] == "aac":
         args += ["-c:a", "copy", "-bsf:a", "aac_adtstoasc"]; codecs.append("mp4a.40.2")
     elif m["a"] == "opus":
@@ -659,7 +680,7 @@ def api_media(vid):
     if r["native"]:
         return {"native": True}
     m = media_info(r)
-    _args, mime, copy = live_plan(m)
+    _args, mime, copy = live_plan(m, request.args.get("hevc") == "1")
     return {"native": False, "dur": probe_duration(r["path"], r["mtime"]), "mime": mime,
             "offset": m["start"], "first": 8 if copy else 4, "chunk": 30 if copy else 12}
 
@@ -676,7 +697,7 @@ def stream(vid):
     if start is None:
         return _live_stream(r)
     length = min(60.0, max(1.0, request.args.get("len", 30.0, type=float)))
-    args = live_plan(media_info(r))[0]
+    args = live_plan(media_info(r), request.args.get("hevc") == "1")[0]
     # -copyts + frag_discont (needs delay_moov): the piece keeps the file's own timestamps
     cmd = ([FFMPEG, "-v", "error", "-copyts", "-ss", f"{max(0.0, start):.3f}", "-t", f"{length:.3f}", "-i", r["path"],
             "-map", "0:V:0", "-map", "0:a:0?"] + args +
@@ -1042,7 +1063,18 @@ def api_tasks():
     ids = {r["id"] for r in visible(scan())}
     tn = dir_names(THUMB_DIR)
     thumbs = sum(1 for v in ids if v + ".jpg" in tn)
-    return {"thumbs": {"done": thumbs, "total": len(ids), "running": _warm_state["busy"] and thumbs < len(ids)}}
+    caps, seen = [], set()
+    for key, j in list(_jobs.items()):
+        vid, _, lang = key.partition(":")
+        if j.get("state") not in ("queued", "running") or vid not in ids or id(j) in seen:
+            continue
+        seen.add(id(j))   # translating first transcribes: both keys share one job
+        r = get_rec(vid)
+        caps.append({"title": r["title"] if r else vid, "state": j["state"],
+                     "progress": round(j.get("progress") or 0, 3), "lang": LANG_NAMES.get(lang, lang)})
+    caps.sort(key=lambda c: c["state"] != "running")
+    return {"thumbs": {"done": thumbs, "total": len(ids), "running": _warm_state["busy"] and thumbs < len(ids)},
+            "captions": caps}
 
 
 def thumb_overrides() -> dict:

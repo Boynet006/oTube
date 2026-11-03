@@ -29,10 +29,11 @@
   function savePrefs() { writeJSON(PREF_KEY, prefs); }
 
   // MKV/AVI/TS…: loaded piece by piece (stream.js), starting where playback will resume
+  var live = null;
   if (video.getAttribute("data-native") === "0" && window.otubeStream) {
     var at0 = parseFloat(new URLSearchParams(location.search).get("t")), e0 = readJSON(PROG_KEY, {})[vid];
     if (!(at0 > 0) && S.resume !== false && e0 && e0.t > 5 && (!e0.d || e0.t < e0.d - 10)) at0 = e0.t;
-    window.otubeStream(video, vid, { start: at0 > 0 ? at0 : 0 });
+    live = window.otubeStream(video, vid, { start: at0 > 0 ? at0 : 0 });
   }
 
   // ---------- icons ----------
@@ -228,7 +229,7 @@
   }
   // seek preview: a frame grabbed from the video at the hovered time (made on request,
   // ~0.1 s, nothing stored). One request at a time; the latest position wins.
-  var frameEl = scrub.querySelector(".p-scrub__frame"), fw = 0, frameWant = null, frameBusy = false;
+  var frameEl = scrub.querySelector(".p-scrub__frame"), fw = 0, frameWant = null, frameBusy = false, warmTimer = null;
   // YouTube-like size: about a quarter of the player's width (160-480px), 16:9
   function sizeFrame() {
     fw = Math.round(Math.min(480, Math.max(160, wrap.offsetWidth * 0.25)));
@@ -265,6 +266,10 @@
     tip.style.left = x + "px";
     if (dur() && isFinite(ratio)) {
       frameAt(ratio * dur());
+      if (live) {   // resting on a spot: fetch that piece now, so clicking there plays at once
+        clearTimeout(warmTimer);
+        warmTimer = setTimeout(function () { live.prefetch(ratio * dur()); }, 300);
+      }
       frameEl.style.left = Math.min(r.width - fw / 2, Math.max(fw / 2, ratio * r.width)) + "px";
     }
   }
@@ -273,7 +278,7 @@
     previewAt(ratio);
     if (dragging) { fill.style.width = knob.style.left = ratio * 100 + "%"; video.currentTime = ratio * dur(); }
   });
-  scrub.addEventListener("pointerleave", function () { if (!dragging) hoverBar.style.width = "0"; });
+  scrub.addEventListener("pointerleave", function () { clearTimeout(warmTimer); if (!dragging) hoverBar.style.width = "0"; });
   scrub.addEventListener("pointerdown", function (e) {
     if (!dur()) return;
     dragging = true; wasPaused = video.paused;

@@ -624,8 +624,7 @@
         vid.className = "preview";
         var m = "1"; try { m = localStorage.getItem(MUTE_KEY) || "1"; } catch (e) {}
         vid.muted = m !== "0"; vid.playsInline = true; vid.loop = true; vid.preload = "auto";
-        // start ~15% in (at most 10 s), like YouTube
-        var d = parseFloat(card.getAttribute("data-dur")) || 0, at = d > 15 ? Math.min(10, d * 0.15) : 0;
+        var at = startAt();
         if (native) vid.src = "/stream/" + id;
         else if (window.otubeStream) live = window.otubeStream(vid, id, { start: at });
         thumb.appendChild(vid);
@@ -637,7 +636,11 @@
           if (!ui) build();
         }, { once: true });
       }
+      // start ~15% in (at most 10 s), like YouTube
+      function startAt() { var d = parseFloat(card.getAttribute("data-dur")) || 0; return d > 15 ? Math.min(10, d * 0.15) : 0; }
       card.addEventListener("mouseenter", function () {
+        // MKV/AVI/TS: fetch the first piece during the hover delay, so the preview starts at once
+        if (!native && window.otubeStream) window.otubeStream.warm(id, startAt());
         timer = setTimeout(startVideo, 550);
       });
       card.addEventListener("mouseleave", function () { if (!dragging) stop(); });
@@ -1722,7 +1725,7 @@
 })();
 
 
-// ---- Background-tasks status in the top bar (thumbnails) ----
+// ---- Background-tasks status in the top bar (thumbnails, auto-captions) ----
 (function () {
   var ctl = document.getElementById("tasks-ctl");
   if (!ctl) return;
@@ -1737,19 +1740,41 @@
   function chip(r, cls, text) { var c = r.querySelector(".tk-chip"); c.className = "tk-chip " + cls; c.textContent = text; }
   function render(d) {
     last = d;
-    var th = d.thumbs, active = th.running, m = mode(), left = th.total - th.done;
+    var th = d.thumbs, caps = d.captions || [], cap = caps[0], m = mode(), left = th.total - th.done;
+    var active = th.running || caps.length > 0;
     ctl.hidden = m === "never" || !(active || m === "always" || open);
     ctl.classList.toggle("busy", active);
-    var t1 = active ? "Thumbnails " + pct(th.done, th.total) + "%" : left ? "Thumbnails" : "All ready";
-    var t2 = left ? th.done + "/" + th.total : "✓";
-    fg.style.strokeDashoffset = C * (1 - (th.total ? th.done / th.total : 1));
+    var t1, t2, p;
+    if (th.running || !cap) {
+      t1 = th.running ? "Thumbnails " + pct(th.done, th.total) + "%" : left ? "Thumbnails" : "All ready";
+      t2 = left ? th.done + "/" + th.total : "✓";
+      p = th.total ? th.done / th.total : 1;
+    } else {
+      t1 = cap.state === "running" ? "Captions " + Math.floor(cap.progress * 100) + "%" : "Captions queued";
+      t2 = caps.length > 1 ? caps.length + " videos" : cap.title;
+      p = cap.state === "running" ? cap.progress : 0;
+    }
+    fg.style.strokeDashoffset = C * (1 - Math.min(1, Math.max(0, p)));
     ctl.classList.toggle("done", !active && !left);
     l1.textContent = t1; l2.textContent = t2;
     btn.title = "Background tasks: " + t1 + " (" + t2 + "). Click for details";
     var tr = row("thumbs");
     tr.querySelector(".tk-bar i").style.width = pct(th.done, th.total) + "%";
-    chip(tr, active ? "run" : left ? "idle" : "ok", active ? "Running" : left ? "Waiting" : "Done");
+    chip(tr, th.running ? "run" : left ? "idle" : "ok", th.running ? "Running" : left ? "Waiting" : "Done");
     tr.querySelector(".tk-count").textContent = th.done + " of " + th.total + " ready" + (left ? " · " + left + " to go" : "");
+    var cr = row("caps");
+    cr.hidden = !cap;
+    if (cap) {
+      chip(cr, cap.state === "running" ? "run" : "idle", cap.state === "running" ? "Running" : "Queued");
+      cr.querySelector(".tk-bar i").style.width = (cap.state === "running" ? cap.progress * 100 : 0) + "%";
+      var ul = cr.querySelector(".tk-list"); ul.innerHTML = "";
+      caps.forEach(function (c) {
+        var li = document.createElement("li");
+        li.textContent = c.title + (c.lang ? " → " + c.lang : "") + " · " +
+          (c.state === "running" ? Math.floor(c.progress * 100) + "%" : "queued");
+        li.title = c.title; ul.appendChild(li);
+      });
+    }
     pop.querySelector(".tk-sum").textContent = active ? "Working…" : "Idle";
     schedule(active || open ? 2000 : 12000);
   }
