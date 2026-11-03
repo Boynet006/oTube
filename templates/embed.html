@@ -6,6 +6,8 @@
   <title>{{ video.title }} — oTube</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
   <script>window.OTUBE = {{ app_settings|tojson }};</script>
+  <script>window.OTUBE_PROGRESS = {{ page_progress()|tojson }};</script>
+  <script src="{{ url_for('static', filename='sync.js') }}"></script>
 </head>
 <body class="embed">
   <div class="player-wrap" id="player-wrap">

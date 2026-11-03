@@ -11,48 +11,56 @@
   var HEVC = !!(MS && MS.isTypeSupported && MS.isTypeSupported('video/mp4; codecs="hvc1.1.6.L150.90"'));
   var Q = HEVC ? "hevc=1" : "";
 
-  var infos = {};   // id -> promise of /api/media
-  function info(id) {
-    return infos[id] || (infos[id] = fetch("/api/media/" + id + (Q ? "?" + Q : ""))
+  var infos = {};   // id + options -> promise of /api/media
+  function info(id, q) {
+    q = q == null ? Q : q;
+    var k = id + "?" + q;
+    return infos[k] || (infos[k] = fetch("/api/media/" + id + (q ? "?" + q : ""))
       .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
-      .catch(function (e) { delete infos[id]; throw e; }));
+      .catch(function (e) { delete infos[k]; throw e; }));
   }
-  function fetchPiece(id, from, len, signal) {
-    return fetch("/stream/" + id + "?start=" + from.toFixed(3) + "&len=" + len + (Q ? "&" + Q : ""), signal ? { signal: signal } : {})
+  function fetchPiece(id, from, len, signal, q) {
+    return fetch("/stream/" + id + "?start=" + from.toFixed(3) + "&len=" + len + (q ? "&" + q : ""), signal ? { signal: signal } : {})
       .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.arrayBuffer(); });
   }
 
   // Pieces fetched ahead of time (hovering a card or the seek bar), used once when
   // playback gets there: seeks and previews then start without waiting for the server.
   var pieces = [];
-  function find(id, from, take) {
+  function find(id, from, take, q) {
+    q = q == null ? Q : q;
     for (var i = 0; i < pieces.length; i++) {
       var p = pieces[i];
-      if (p.id === id && p.start <= from + 0.05 && from < p.start + Math.max(p.len, 4) - 1) {
+      if (p.id === id && p.q === q && p.start <= from + 0.05 && from < p.start + Math.max(p.len, 4) - 1) {
         if (take) pieces.splice(i, 1);
         return p;
       }
     }
     return null;
   }
-  function warm(id, from) {
+  function warm(id, from, q) {
+    q = q == null ? Q : q;
     from = Math.max(0, from || 0);
-    if (find(id, from, false)) return;
-    var e = { id: id, start: from, len: 0, p: null };
-    e.p = info(id).then(function (m) {
+    if (find(id, from, false, q)) return;
+    var e = { id: id, q: q, start: from, len: 0, p: null };
+    e.p = info(id, q).then(function (m) {
       if (m.native) throw new Error("native");
       e.len = m.first;   // short: cheap if it's never used
-      return fetchPiece(id, from, e.len);
+      return fetchPiece(id, from, e.len, null, q);
     });
     e.p.catch(function () { var i = pieces.indexOf(e); if (i !== -1) pieces.splice(i, 1); });
     pieces.push(e);
     if (pieces.length > 6) pieces.shift();
   }
 
-  // otubeStream(video, id, {start}) -> {destroy(), prefetch(t)}
+  // otubeStream(video, id, {start, audio, burn, force}) -> {destroy(), prefetch(t)}
+  //   audio: audio track number; burn: picture-subtitle stream drawn into the video;
+  //   force: load an MP4 this way too (needed for audio / burn on MP4s)
   function attach(video, id, opts) {
     opts = opts || {};
     var dead = false, ctl = null, url = null;
+    var q = [Q, opts.audio ? "a=" + opts.audio : "", opts.burn != null ? "burn=" + opts.burn : "",
+             opts.force ? "force=1" : ""].filter(Boolean).join("&");
     var api = {
       prefetch: function () {},
       destroy: function () {
@@ -62,7 +70,7 @@
       }
     };
     function plain() { if (!dead) video.src = "/stream/" + id; }   // continuous stream, no seeking ahead
-    info(id).then(function (m) {
+    info(id, q).then(function (m) {
       if (dead) return;
       if (m.native) { video.src = "/stream/" + id; return; }
       if (!MS || !MS.isTypeSupported(m.mime)) { plain(); return; }
@@ -74,7 +82,7 @@
       if (MS === window.ManagedMediaSource) video.disableRemotePlayback = true;   // required by Safari
       url = URL.createObjectURL(ms);
       video.src = url;
-      api.prefetch = function (t) { if (!dead && sb && t >= 0 && !rangeAt(t)) warm(id, t); };
+      api.prefetch = function (t) { if (!dead && sb && t >= 0 && !rangeAt(t)) warm(id, t, q); };
       ms.addEventListener("sourceopen", function () {
         if (sb) return;
         try {
@@ -116,7 +124,7 @@
         busy = true;
         ctl = window.AbortController ? new AbortController() : null;
         var len = nFetched++ ? m.chunk : m.first;   // a short first piece starts playback sooner
-        var hit = find(id, from, true), req;
+        var hit = find(id, from, true, q), req;
         if (hit) {   // fetched ahead of time; a seek elsewhere still cancels the wait
           var c = ctl;
           req = new Promise(function (ok, bad) {
@@ -124,7 +132,7 @@
             if (c) c.signal.addEventListener("abort", function () { bad(aborted()); });
           });
         } else {
-          req = fetchPiece(id, from, len, ctl && ctl.signal);
+          req = fetchPiece(id, from, len, ctl && ctl.signal, q);
         }
         req.then(function (buf) {
             if (dead) return;
@@ -181,7 +189,7 @@
         if (dead || !sb) return;
         clearTimeout(seekTimer);
         if (rangeAt(video.currentTime)) { pump(); return; }
-        if (find(id, video.currentTime, false)) { if (busy && ctl) ctl.abort(); else pump(); return; }   // fetched ahead: go now
+        if (find(id, video.currentTime, false, q)) { if (busy && ctl) ctl.abort(); else pump(); return; }   // fetched ahead: go now
         // somewhere not loaded: wait a moment (dragging the scrubber seeks a lot), then fetch there
         seekTimer = setTimeout(function () {
           if (dead || rangeAt(video.currentTime)) return;
@@ -196,4 +204,5 @@
 
   window.otubeStream = attach;
   attach.warm = warm;
+  attach.info = info;
 })();

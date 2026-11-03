@@ -236,13 +236,18 @@
   var typeSel = document.getElementById("type-select");
   var watchSel = document.getElementById("watch-select");
   // watched state per card, from this browser's watch history
-  if (grid) {
+  function paintWatched() {
     var wprog = {};
     try { wprog = JSON.parse(localStorage.getItem("kidtube.progress") || "{}"); } catch (e) {}
     grid.querySelectorAll(".card").forEach(function (c) {
       var e = wprog[c.getAttribute("data-id")];
       setCardWatch(c, e && e.w ? 1 : e && e.d ? e.t / e.d : 0);
     });
+  }
+  if (grid) {
+    paintWatched();
+    // another device changed progress while this tab was in the background (sync.js)
+    window.otubeProgressChanged = function () { paintWatched(); refreshWatchCounts(); applyFilters(); };
   }
   function setCardWatch(c, r) {
     var st = r >= 0.97 ? "done" : r > 0.02 ? "partial" : "new";

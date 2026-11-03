@@ -29,11 +29,23 @@
   function savePrefs() { writeJSON(PREF_KEY, prefs); }
 
   // MKV/AVI/TS…: loaded piece by piece (stream.js), starting where playback will resume
-  var live = null;
-  if (video.getAttribute("data-native") === "0" && window.otubeStream) {
+  var live = null, native = video.getAttribute("data-native") !== "0";
+  if (!native && window.otubeStream) {
     var at0 = parseFloat(new URLSearchParams(location.search).get("t")), e0 = readJSON(PROG_KEY, {})[vid];
     if (!(at0 > 0) && S.resume !== false && e0 && e0.t > 5 && (!e0.d || e0.t < e0.d - 10)) at0 = e0.t;
     live = window.otubeStream(video, vid, { start: at0 > 0 ? at0 : 0 });
+  }
+
+  // Audio track / picture subtitles: reload the video with the new choice, same spot.
+  // (An MP4 then also goes piece by piece; back to defaults it plays the file directly.)
+  var audioTracks = [], audioIdx = 0, burnSubs = [], burnIdx = null, switching = null;
+  if (window.otubeStream) window.otubeStream.info(vid).then(function (m) { audioTracks = m.audio || []; }).catch(function () {});
+  function reloadSource() {
+    switching = { t: video.currentTime, paused: video.paused };
+    if (live) { live.destroy(); live = null; }
+    var custom = audioIdx > 0 || burnIdx != null;
+    if (native && !custom) { video.src = "/stream/" + vid; return; }
+    live = window.otubeStream(video, vid, { start: switching.t, audio: audioIdx, burn: burnIdx, force: native });
   }
 
   // ---------- icons ----------
@@ -431,7 +443,14 @@
     savePrefs();
     if (!quiet) toast(i >= 0 ? "Subtitles: " + subs[i].label : "Subtitles off");
   }
+  function setBurn(i, label) {   // picture subtitles (stream index) or null = off
+    if (burnIdx === i) return;
+    burnIdx = i;
+    reloadSource();
+    toast(i == null ? "Subtitles off" : "Subtitles: " + label);
+  }
   function toggleCC() {
+    if (burnIdx != null) { setBurn(null); return; }
     if (!subs.length) { openMenu(); renderCCView(); return; }  // offer auto-generate
     if (ccIndex >= 0) setCC(-1);
     else {
@@ -451,6 +470,7 @@
     return fetch("/subs/" + vid).then(function (r) { return r.json(); }).then(function (d) {
       [].slice.call(video.querySelectorAll("track")).forEach(function (t) { t.remove(); });
       subs = d.tracks || [];
+      burnSubs = d.burn || [];
       capInfo = d;
       subs.forEach(function (s) {
         var t = document.createElement("track");
@@ -555,7 +575,9 @@
   }
   function renderCCView() {
     renderList("Subtitles/CC",
-      [{ v: -1, label: "Off" }].concat(subs.map(function (s, i) { return { v: i, label: s.label }; })), ccIndex, "cc");
+      [{ v: -1, label: "Off" }].concat(subs.map(function (s, i) { return { v: i, label: s.label }; }))
+        .concat(burnSubs.map(function (s) { return { v: "b" + s.stream, label: s.label + " (picture)" }; })),
+      burnIdx != null ? "b" + burnIdx : ccIndex, "cc");
     menu.setAttribute("data-view", "cc");
     var st = capInfo.auto.state, html;
     function pct(j) { return j.state === "queued" ? "Waiting" : Math.round((j.progress || 0) * 100) + "%"; }
@@ -577,12 +599,15 @@
   }
   function renderMain() {
     menu.setAttribute("data-view", "main");
-    var ccLabel = !subs.length ? "None" : ccIndex >= 0 ? subs[ccIndex].label : "Off";
+    var burnSel = burnSubs.filter(function (s) { return s.stream === burnIdx; })[0];
+    var ccLabel = burnSel ? burnSel.label : !subs.length && !burnSubs.length ? "None" : ccIndex >= 0 ? subs[ccIndex].label : "Off";
+    var aSel = audioTracks[audioIdx];
     var rate = video.playbackRate === 1 ? "Normal" : video.playbackRate + "x";
     menu.innerHTML =
       row("Autoplay", '<span class="p-mini-switch' + (prefs.autoplay ? " on" : "") + '"></span>', "autoplay") +
       row("Loop", '<span class="p-mini-switch' + (video.loop ? " on" : "") + '"></span>', "loop") +
       row("Subtitles/CC", ccLabel + " " + I.chev, "cc-view") +
+      (audioTracks.length > 1 ? row("Audio track", (aSel ? aSel.label : "") + " " + I.chev, "audio-view") : "") +
       row("Playback speed", rate + " " + I.chev, "speed-view") +
       row("Brightness", Math.round((typeof prefs.bright === "number" ? prefs.bright : 1) * 100) + "% " + I.chev, "bright-view") +
       row("Keyboard shortcuts", I.chev, "keys");
@@ -607,6 +632,13 @@
     else if (m === "speed-view") renderList("Playback speed",
       SPEEDS.map(function (s) { return { v: s, label: s === 1 ? "Normal" : s + "" }; }), video.playbackRate, "speed");
     else if (m === "cc-view") renderCCView();
+    else if (m === "audio-view") renderList("Audio track",
+      audioTracks.map(function (a, i) { return { v: i, label: a.label }; }), audioIdx, "audio");
+    else if (m === "audio") {
+      var ai = +b.getAttribute("data-v");
+      if (ai !== audioIdx) { audioIdx = ai; reloadSource(); toast("Audio: " + audioTracks[ai].label); }
+      closeMenu();
+    }
     else if (m === "gen") { generateCaptions(); renderCCView(); }
     else if (m === "tr") { translateTo(b.getAttribute("data-v"), b.getAttribute("data-name")); renderCCView(); }
     else if (m === "bright-view") renderList("Brightness",
@@ -614,7 +646,18 @@
       typeof prefs.bright === "number" ? prefs.bright : 1, "bright");
     else if (m === "bright") { setBright(+b.getAttribute("data-v")); closeMenu(); }
     else if (m === "speed") { setRate(+b.getAttribute("data-v")); closeMenu(); }
-    else if (m === "cc") { setCC(+b.getAttribute("data-v")); closeMenu(); }
+    else if (m === "cc") {
+      var cv = b.getAttribute("data-v");
+      if (cv.charAt(0) === "b") {
+        var bs = +cv.slice(1);
+        setCC(-1, true);
+        setBurn(bs, (burnSubs.filter(function (s) { return s.stream === bs; })[0] || {}).label);
+      } else {
+        if (burnIdx != null) { burnIdx = null; reloadSource(); }
+        setCC(+cv);
+      }
+      closeMenu();
+    }
     else if (m === "keys") { closeMenu(); showKeys(); }
   });
   document.addEventListener("click", function (e) {
@@ -692,6 +735,12 @@
   // ---------- resume + progress ----------
   var prog = readJSON(PROG_KEY, {});
   video.addEventListener("loadedmetadata", function () {
+    if (switching) {   // reloaded for another audio track / subtitles: continue where we were
+      var sw = switching; switching = null;
+      if (Math.abs(video.currentTime - sw.t) > 1) { try { video.currentTime = sw.t; } catch (e) {} }
+      if (!sw.paused) video.play().catch(function () {});
+      return;
+    }
     var entry = prog[vid];
     var tParam = parseFloat(new URLSearchParams(location.search).get("t"));  // shared link time
     if (tParam > 0 && dur()) {

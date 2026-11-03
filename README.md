@@ -43,3 +43,24 @@ or run in an **administrator** PowerShell:
     New-NetFirewallRule -DisplayName "oTube (port 8700)" -Direction Inbound -Protocol TCP -LocalPort 8700 -Action Allow -Profile Private
 
 Your Wi-Fi must be set to "Private" in Windows network settings.
+
+## Code layout
+
+`app.py` starts the server; the code lives in `otube/`:
+
+| Module | What it does |
+|---|---|
+| `core.py` | Flask app, data paths, config + settings, Family/Private mode, durations, library scan |
+| `captions.py` | Subtitles as WebVTT, auto-captions (faster-whisper), translation |
+| `media.py` | Playback (direct, or converted live piece by piece), thumbnails, seek-bar frames, background warmer |
+| `progress.py` | Watch progress shared between devices |
+| `library.py` | Folders, modes + PIN, rename/delete, likes, playlists |
+| `pages.py` | Home, watch and settings pages, settings API, stats, app manifest |
+
+## Tests
+
+```powershell
+./run-tests.ps1
+```
+
+Runs the tests inside the Docker image against short generated clips (your library isn't touched).
