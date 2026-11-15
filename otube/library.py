@@ -9,10 +9,10 @@ import time
 from flask import abort, redirect, request, send_file, session, url_for
 from werkzeug.security import check_password_hash, generate_password_hash
 
-from .core import (
-    AUTO_SUBS_DIR, FFPROBE, LIKED_ID, PIN_LOCKOUT_SECS, PIN_MAX_TRIES, PIN_RE, THUMB_DIR,
+from .core import (folder_path, 
+    AUTO_SUBS_DIR, BUILTIN_PLAYLISTS, DISLIKED_ID, FFPROBE, LIKED_ID, PIN_LOCKOUT_SECS, PIN_MAX_TRIES, PIN_RE, THUMB_DIR,
     _pin_fails, allowed, app, find_playlist, folder_shown, get_rec, load_config, load_playlists,
-    private_unlocked, rescan_now, save_config, save_playlists, scan, visible,
+    private_unlocked, rescan_now, save_config, save_playlists, scan, to_local, visible,
 )
 from .captions import _subs_cache
 
@@ -117,6 +117,28 @@ def folder_private():
     return {"ok": True}
 
 
+@app.route("/folder_hidden", methods=["POST"])
+def folder_hidden():
+    """Hide a folder from Home (or show it again). Unlike Private mode, nothing is locked:
+    the folder stays in the sidebar and opens as usual."""
+    top = request.form.get("folder_path", "")
+    cfg = load_config()
+    hid = cfg.setdefault("hidden_folders", [])
+    if top not in cfg["video_folders"]:
+        return {"ok": False, "error": "Unknown folder"}, 404
+    sub_ = request.form.get("sub", "").strip("/")
+    if ".." in sub_.split("/"):
+        return {"ok": False, "error": "Bad subfolder"}, 400
+    folder = folder_path(top, sub_) if sub_ else top
+    if request.form.get("hidden") == "1":
+        if folder not in hid:
+            hid.append(folder)
+    elif folder in hid:
+        hid.remove(folder)
+    save_config(cfg)
+    return {"ok": True}
+
+
 @app.route("/pin", methods=["POST"])
 def set_pin():
     """Set or clear the PIN needed to enter Private mode (only from Private mode)."""
@@ -156,9 +178,38 @@ def remove_folder():
         cfg["video_folders"].remove(path)
         if path in cfg.get("private_folders", []):
             cfg["private_folders"].remove(path)
+        cfg["hidden_folders"] = [h for h in cfg.get("hidden_folders", [])
+                                 if h != path and not h.startswith(path.rstrip("/") + "/")]
         save_config(cfg)
         rescan_now()
+        prune_orphans()
     return redirect(url_for("index"))
+
+
+def prune_orphans() -> int:
+    """Delete thumbnails, auto-captions and playlist entries of videos that are no longer in the library
+    (folder removed, file deleted outside oTube). Skipped while any library folder is
+    unreachable (unplugged drive), so its thumbnails survive until it comes back."""
+    folders = load_config().get("video_folders", [])
+    if not all(os.path.isdir(to_local(f)) for f in folders):
+        return 0
+    keep, n = {r["id"] for r in scan()}, 0
+    for d in (THUMB_DIR, AUTO_SUBS_DIR):
+        for e in os.scandir(d):
+            vid = e.name.split(".", 1)[0]
+            if e.is_file() and len(vid) == 32 and vid not in keep:
+                _clear_caches(vid); n += 1
+    cfg = load_config()   # chosen thumbnail times of videos that are gone
+    picked = cfg.get("thumbs", {})
+    if any(v not in keep for v in picked):
+        cfg["thumbs"] = {v: t for v, t in picked.items() if v in keep}
+        save_config(cfg)
+    pls = load_playlists()   # Liked / Disliked / your playlists: drop videos that are gone
+    if any(v not in keep for pl in pls for v in pl.get("items", [])):
+        for pl in pls:
+            pl["items"] = [v for v in pl.get("items", []) if v in keep]
+        save_playlists(pls)
+    return n
 
 
 def _clear_caches(vid: str) -> None:
@@ -219,6 +270,24 @@ def open_external(vid):
     return {"ok": True}
 
 
+@app.route("/gom/<vid>", methods=["POST"])
+def open_gom(vid):
+    """Play the video in GOM Player (GOM mode). From Docker the on-PC helper launches it."""
+    r = get_rec(vid)
+    if not allowed(r):
+        return {"ok": False, "error": "not found"}, 404
+    if os.path.exists("/.dockerenv"):
+        return {"ok": True, "delegate": r["host_path"]}
+    import shutil
+    exe = next((p for p in (r"C:\Program Files\GRETECH\GOMPlayerPlus\GOM64.EXE",
+                            r"C:\Program Files (x86)\GOM\GOMPlayer\GOM.exe") if os.path.exists(p)),
+               shutil.which("GOM64") or shutil.which("GOM"))
+    if not exe:
+        return {"ok": False, "error": "GOM Player isn't installed"}, 404
+    subprocess.Popen([exe, r["path"]])
+    return {"ok": True}
+
+
 @app.route("/rename/<vid>", methods=["POST"])
 def rename(vid):
     """Rename the file on disk (same folder, extension preserved)."""
@@ -259,26 +328,65 @@ def delete_video(vid):
     return {"ok": True}
 
 
+@app.route("/delete_many", methods=["POST"])
+def delete_many():
+    """Bulk delete to the Recycle Bin. The on-PC helper moves the files (Docker can't reach the
+    Recycle Bin), so step 1 returns their PC paths; step 2 (done=1) forgets the ones that are gone."""
+    recs = [r for r in (get_rec(v) for v in request.form.getlist("vid")) if allowed(r)]
+    if not request.form.get("done"):
+        return {"ok": True, "delegate": [{"id": r["id"], "path": r["host_path"]} for r in recs]}
+    gone = {r["id"] for r in recs if not os.path.exists(r["path"])}
+    for vid in gone:
+        _clear_caches(vid)
+    cfg = load_config()
+    if any(v in gone for v in cfg.get("thumbs", {})):
+        cfg["thumbs"] = {v: t for v, t in cfg["thumbs"].items() if v not in gone}
+        save_config(cfg)
+    pls = load_playlists()
+    if any(v in gone for pl in pls for v in pl.get("items", [])):
+        for pl in pls:
+            pl["items"] = [v for v in pl.get("items", []) if v not in gone]
+        save_playlists(pls)
+    rescan_now()
+    return {"ok": True, "deleted": sorted(gone)}
+
+
 # ---- Playlists (JSON API used by the "Save to playlist" dialog + playlist page) ----
 
 
 @app.route("/api/like/<vid>", methods=["POST"])
 def api_like(vid):
+    """Toggle Like (older pages); see /api/rate."""
     if not allowed(get_rec(vid)):
         return {"ok": False, "error": "not found"}, 404
+    liked = vid in find_playlist(load_playlists(), LIKED_ID)["items"]
+    return {"ok": True, "liked": set_rating(vid, "none" if liked else "like") == "like"}
+
+
+def set_rating(vid: str, rating: str) -> str:
+    """Put the video in Liked or Disliked videos (newest first, like YouTube), or neither."""
     pls = load_playlists()
-    pl = find_playlist(pls, LIKED_ID)
-    if not pl:
-        pl = {"id": LIKED_ID, "name": "Liked videos", "items": []}
-        pls.insert(0, pl)
-    if vid in pl["items"]:
-        pl["items"].remove(vid)
-        liked = False
-    else:
-        pl["items"].insert(0, vid)  # newest like first, like YouTube
-        liked = True
+    for pid, r in ((LIKED_ID, "like"), (DISLIKED_ID, "dislike")):
+        items = find_playlist(pls, pid)["items"]
+        if vid in items:
+            items.remove(vid)
+        if r == rating:
+            items.insert(0, vid)
     save_playlists(pls)
-    return {"ok": True, "liked": liked}
+    return rating if rating in ("like", "dislike") else "none"
+
+
+@app.route("/api/rate/<vid>", methods=["POST"])
+def api_rate(vid):
+    """{rating: like | dislike | none} -> the video's rating + both list sizes."""
+    if not allowed(get_rec(vid)):
+        return {"ok": False, "error": "not found"}, 404
+    rating = (request.get_json(silent=True) or {}).get("rating")
+    if rating not in ("like", "dislike", "none"):
+        return {"ok": False, "error": "bad rating"}, 400
+    rating = set_rating(vid, rating)
+    pls = load_playlists()
+    return {"ok": True, "rating": rating, "counts": {pid: len(find_playlist(pls, pid)["items"]) for pid in BUILTIN_PLAYLISTS}}
 
 
 @app.route("/download/<vid>")
@@ -326,7 +434,8 @@ def api_info(vid):
 def api_playlists():
     vids = set(request.args.getlist("vid"))
     return {"playlists": [{"id": p["id"], "name": p["name"], "count": len(p["items"]),
-                           "has": len(vids & set(p["items"]))} for p in load_playlists()]}
+                           "has": len(vids & set(p["items"]))} for p in load_playlists()
+                          if p["id"] != DISLIKED_ID]}   # disliking is done with its button
 
 
 @app.route("/api/playlists", methods=["POST"])
@@ -350,6 +459,8 @@ def api_playlist_action(pid, action):
     pl = find_playlist(pls, pid)
     if not pl:
         return {"ok": False, "error": "no such playlist"}, 404
+    if pid in BUILTIN_PLAYLISTS and action in ("rename", "delete"):
+        return {"ok": False, "error": "built-in playlist"}, 400
     vids = [v for v in request.form.getlist("vid") if v]  # one or many
     vid = vids[0] if vids else ""
     items = pl["items"]

@@ -10,10 +10,14 @@ services:
       # Add folders in the UI as /videos/<subfolder>.
       - "Q:/Old Drive 2/Videos:/videos"
       - "C:/Users/al_ha/Desktop/mrRobotSongs:/media/mrRobotSongs"
-      # Whole drives, so folders added in the UI by their Windows path (C:/..., Q:/...)
-      # just work. Add a line per extra drive letter.
-      - "C:/:/host/c"
-      - "Q:/:/host/q"
+      # Every Windows drive (C:, E:, USB drives, ...) as /host/<letter>, so folders added in
+      # the UI by their Windows path just work. This is Docker Desktop's own view of the
+      # drives; "rslave" lets drives that show up later appear without a restart.
+      - type: bind
+        source: /run/desktop/mnt/host
+        target: /host
+        bind:
+          propagation: rslave
     environment:
       - OTUBE_HOST_ROOT=/host
       # Set by start-otube.ps1 to http://<this PC's network IP>:8700 (Settings → Devices)

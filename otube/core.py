@@ -7,7 +7,7 @@ import subprocess
 import threading
 import time
 
-from flask import Flask, session
+from flask import Flask, g, session
 
 
 app = Flask(__name__, root_path=os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -132,6 +132,8 @@ SETTINGS_DEFAULTS = {
     "thumbw": 300,             # card width in px (120-640)
     "continueShelf": True,
     "hoverPreview": True,
+    "rateMarksWatched": False, # Like / Dislike also marks the video as watched
+    "selectReach": 14,         # px of extra click area around a card's select circle (0-40)
     "newDays": 7,              # "New" badge for files added within N days
     "autoplay": True,
     "upnextSeconds": 5,        # countdown before the next video (0 = straight away)
@@ -147,8 +149,11 @@ SETTINGS_DEFAULTS = {
     "topTasks": "auto",        # background-tasks indicator in the top bar: auto (while working) | always | never
     "topBrightness": True,     # top-bar buttons
     "topMini": True,
+    "topGom": True,            # GOM Player button (top bar)
     "topMode": True,
 }
+# Numeric settings kept inside these bounds (same as the sliders)
+SETTINGS_RANGES = {"thumbw": (120, 640), "selectReach": (0, 40), "volume": (0, 100)}
 WHISPER_MODELS = ["tiny", "base", "small", "medium", "large-v3-turbo", "large-v3"]
 SORT_ICONS = {'name': '<svg viewBox="0 0 24 24" width="22" height="22"><text x="2" y="11" font-size="9" font-weight="700" fill="currentColor">A</text><text x="2" y="21" font-size="9" font-weight="700" fill="currentColor">Z</text><path fill="currentColor" d="M16 4h2v12h3l-4 4-4-4h3z"/></svg>', 'newest': '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm0 18a8 8 0 1 1 0-16 8 8 0 0 1 0 16zm.5-13H11v6l5.2 3.2.8-1.3-4.5-2.7V7z"/></svg>', 'size': '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M2 20h20v-4H2v4zm2-3h2v2H4v-2zM2 4v4h20V4H2zm4 3H4V5h2v2zm-4 7h20v-4H2v4zm2-3h2v2H4v-2z"/></svg>', 'duration': '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M15 1H9v2h6V1zm-4 13h2V8h-2v6zm8.03-6.61 1.42-1.42c-.43-.51-.9-.99-1.41-1.41l-1.42 1.42A8.96 8.96 0 0 0 12 4a9 9 0 1 0 9 9c0-2.12-.74-4.07-1.97-5.61zM12 20a7 7 0 1 1 0-14 7 7 0 0 1 0 14z"/></svg>', 'random': '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M10.59 9.17 5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm.33 9.41-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z"/></svg>'}
 
@@ -168,7 +173,10 @@ def save_config(cfg: dict) -> None:
 PIN_RE = re.compile(r"^\d{4,8}$")
 PIN_MAX_TRIES, PIN_LOCKOUT_SECS = 5, 30
 _pin_fails: dict[str, list] = {}  # client ip -> [failures, locked_until]
-LIKED_ID = "liked"  # built-in "Liked videos" playlist, filled by the Like button
+# Built-in playlists filled by the Like / Dislike buttons (always listed first; a video
+# is in at most one of them)
+LIKED_ID, DISLIKED_ID = "liked", "disliked"
+BUILTIN_PLAYLISTS = {LIKED_ID: "Liked videos", DISLIKED_ID: "Disliked videos"}
 # Folders listed in config "private_folders" are hidden everywhere (lists, search,
 # up next, playlists, direct URLs) unless this browser session unlocked Private
 # mode -- with the PIN, if one is set. The session cookie ends with the browser.
@@ -178,6 +186,33 @@ def private_unlocked() -> bool:
 
 def private_folders(cfg: dict | None = None) -> set:
     return set((cfg or load_config()).get("private_folders", []))
+
+
+def hidden_folders(cfg: dict | None = None) -> set:
+    """Hidden folders and subfolders: their videos show nowhere (Home, the folder itself,
+    playlists, search, Up next) until shown again. Entries are paths: "<library folder>" or "<library folder>/<sub>"."""
+    return set((cfg or load_config()).get("hidden_folders", []))
+
+
+def folder_path(folder: str, sub: str = "") -> str:
+    """Library folder + subfolder -> one path, the form used in hidden_folders."""
+    return folder.rstrip("/") + ("/" + sub.strip("/") if sub.strip("/") else "")
+
+
+def _inside(path: str, top: str) -> bool:
+    top = top.rstrip("/")
+    return path == top or path.startswith(top + "/")
+
+
+def hidden_by(path: str, hidden) -> str:
+    """The hidden folder that hides `path` (itself or the nearest parent), or ""."""
+    hits = [h for h in (hidden or ()) if _inside(path, h)]
+    return max(hits, key=len) if hits else ""
+
+
+def hidden_here(v: dict, hidden: set) -> bool:
+    """True when video v is inside a hidden folder (hidden everywhere until shown again)."""
+    return bool(hidden) and bool(hidden_by(folder_path(v["folder"], v.get("subdir", "")), hidden))
 
 
 # The two modes are separate libraries: Family shows only public folders,
@@ -200,9 +235,22 @@ def load_playlists() -> list[dict]:
     try:
         with open(PLAYLISTS_PATH, "r", encoding="utf-8") as f:
             pls = json.load(f)
-        return pls if isinstance(pls, list) else []
+        pls = pls if isinstance(pls, list) else []
     except Exception:
-        return []
+        pls = []
+    for n, (pid, name) in enumerate(BUILTIN_PLAYLISTS.items()):   # Liked, Disliked: always there, on top
+        if not any(p.get("id") == pid for p in pls):
+            pls.insert(n, {"id": pid, "name": name, "items": []})
+    return pls
+
+
+def ratings() -> dict:
+    """vid -> "like" | "dislike", read once per request."""
+    if "ratings" not in g:
+        pls = load_playlists()
+        g.ratings = {v: r for pid, r in ((DISLIKED_ID, "dislike"), (LIKED_ID, "like"))
+                     for v in (find_playlist(pls, pid) or {"items": []})["items"]}
+    return g.ratings
 
 
 def save_playlists(pls: list[dict]) -> None:

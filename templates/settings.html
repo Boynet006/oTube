@@ -24,7 +24,7 @@
   <div class="srow" data-key="{{ key }}" data-search="{{ label|lower }} {{ desc|lower }}">
     {{ head(key, label, desc) }}{{ tail(key) }}
     <div class="sr-range"><input type="range" data-k="{{ key }}" data-scale="{{ scale }}" data-unit="{{ unit }}" min="{{ lo }}" max="{{ hi }}" step="{{ step }}"
-      value="{{ (value * scale)|round|int }}" aria-labelledby="lbl-{{ key|replace('.', '-') }}"><output>{{ (value * scale)|round|int }}{{ unit }}</output></div>
+      value="{{ (value * scale)|round|int }}" aria-labelledby="lbl-{{ key|replace('.', '-') }}"><label class="sr-num"><input type="number" min="{{ lo }}" max="{{ hi }}" step="{{ step }}" value="{{ (value * scale)|round|int }}" inputmode="numeric" aria-label="{{ label }} value"><span>{{ unit }}</span></label></div>
   </div>
 {%- endmacro %}
 <!DOCTYPE html>
@@ -42,7 +42,7 @@
     r.style.setProperty("--app-warm", (d.n ? (d.w == null ? 50 : d.w) / 100 * 0.45 : 0).toFixed(3)); if (d.n) r.classList.add("app-night"); } catch (e) {} })();</script>
 </head>
 <body class="settings-page">
-  <header class="topbar{% for k in ('topBrightness', 'topMini', 'topMode') %}{% if not app_settings[k] %} hide-{{ k }}{% endif %}{% endfor %}" data-tasks="{{ app_settings.topTasks }}">
+  <header class="topbar{% for k in ('topBrightness', 'topMini', 'topGom', 'topMode') %}{% if not app_settings[k] %} hide-{{ k }}{% endif %}{% endfor %}" data-tasks="{{ app_settings.topTasks }}">
     <div class="topbar__left">
       <a class="brand" href="/">
         <svg class="brand__mark" viewBox="0 0 28 28" width="28" height="28" aria-hidden="true"><rect width="28" height="28" rx="7" fill="#ff0033"/><circle cx="14" cy="14" r="8.2" fill="none" stroke="#fff" stroke-width="2.8"/><path d="M12 10.6v6.8l5.4-3.4z" fill="#fff" stroke="#fff" stroke-width="1.2" stroke-linejoin="round"/></svg>
@@ -111,12 +111,20 @@
         <div class="srow srow--block" data-key="thumbw" data-search="thumbnail size width card">
           {{ head('thumbw', 'Thumbnail size', 'Drag to see the size change') }}{{ tail('thumbw') }}
           <div class="thumb-preview">
-            <div class="sr-range"><input type="range" data-k="thumbw" data-scale="1" data-unit="px" min="120" max="640" step="10" value="{{ s.thumbw }}" aria-labelledby="lbl-thumbw"><output>{{ s.thumbw }}px</output></div>
+            <div class="sr-range"><input type="range" data-k="thumbw" data-scale="1" data-unit="px" min="120" max="640" step="10" value="{{ s.thumbw }}" aria-labelledby="lbl-thumbw"><label class="sr-num"><input type="number" min="120" max="640" step="10" value="{{ s.thumbw }}" inputmode="numeric" aria-label="Thumbnail size value"><span>px</span></label></div>
             <div class="tp-stage"><div class="tp-card" id="tp-card"><div class="tp-thumb"><span>2:08</span></div><div class="tp-line"></div><div class="tp-line short"></div></div></div>
+          </div>
+        </div>
+        <div class="srow srow--block" data-key="selectReach" data-search="select circle checkbox reach click area tap target multi-select">
+          {{ head('selectReach', 'Select-circle reach', 'How far around a card\'s select circle a click still selects it. Hover the preview to try it') }}{{ tail('selectReach') }}
+          <div class="thumb-preview">
+            <div class="sr-range"><input type="range" data-k="selectReach" data-scale="1" data-unit="px" min="0" max="40" step="1" value="{{ s.selectReach }}" aria-labelledby="lbl-selectReach"><label class="sr-num"><input type="number" min="0" max="40" step="1" value="{{ s.selectReach }}" inputmode="numeric" aria-label="Select-circle reach value"><span>px</span></label></div>
+            <div class="tp-stage"><div class="sp-thumb" id="sp-demo" style="--sel-reach: {{ s.selectReach }}px"><button type="button" class="sp-check" tabindex="-1" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4z"/></svg></button></div></div>
           </div>
         </div>
         {{ toggle('continueShelf', 'Continue watching', 'Shelf of half-watched videos on the home page', s.continueShelf) }}
         {{ toggle('hoverPreview', 'Hover previews', 'Play a muted preview when hovering a thumbnail', s.hoverPreview) }}
+        {{ toggle('rateMarksWatched', 'Like or dislike marks as watched', 'Liking or disliking a video also marks it as watched. Clearing the rating leaves it watched', s.rateMarksWatched) }}
         {{ select('newDays', '“New” badge', 'Mark files added within this many days', s.newDays, [(1,'1 day'),(3,'3 days'),(7,'7 days'),(14,'14 days'),(30,'30 days')]) }}
       </section>
 
@@ -160,6 +168,7 @@
         {{ select('topTasks', 'Background tasks', 'Progress of background work: thumbnails and auto-captions. Click it for details', s.topTasks, [('auto','While working'),('always','Always'),('never','Hidden')]) }}
         {{ toggle('topBrightness', 'Brightness button', 'Quick brightness & night light. Also in Display above', s.topBrightness) }}
         {{ toggle('topMini', 'Mini player button', 'On the home page. The default is set under Mini player', s.topMini) }}
+        {{ toggle('topGom', 'GOM Player button', 'On the home page: when on, clicking a video plays it in GOM Player on this PC', s.topGom) }}
         {{ toggle('topMode', 'Family / Private button', 'When hidden, switch modes from Privacy below', s.topMode) }}
       </section>
 
@@ -218,6 +227,10 @@
         <div class="srow" data-search="rescan refresh library scan new files">
           <div class="sr-text"><b>Rescan library</b><span>Pick up new or removed files now. Last scan: <span data-stat="scanned">{{ stats.scanned }}</span></span></div>
           <button type="button" class="pin-btn" id="rescan">↻ Rescan now</button>
+        </div>
+        <div class="srow" data-search="similar duplicate same video copies re-encoded">
+          <div class="sr-text"><b>Similar videos</b><span>Find the same video saved more than once (re-encoded, resized or renamed copies).</span></div>
+          <a class="pin-btn" href="/similar">Open</a>
         </div>
       </section>
 

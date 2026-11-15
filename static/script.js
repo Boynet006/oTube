@@ -51,6 +51,7 @@
     });
   }
   window.otubeConfirm = confirmDialog;
+  window.otubeBulkThumbs = function (target, done) { bulkThumbDialog(target, done); };
 
   // "Change thumbnail…": pick a frame (start / middle / any of 12 points / the paused frame)
   function thumbDialog(id, isWatch) {
@@ -113,6 +114,130 @@
       if (d.t == null) ov.querySelector(".tp-default").disabled = true;
       var first = grid.querySelector(".tp-opt"); if (first) first.focus();
     }).catch(function () { grid.innerHTML = '<p class="pin-text">Couldn\u2019t read this video.</p>'; });
+  }
+  // --- Thumbnails for many videos at once (selection bar, folder menu) ---
+  // target: { vids: [...] } or { folder, sub }
+  function bulkThumbDialog(target, done) {
+    var prev = document.activeElement, pct = 30, sample = [], count = 0, timer = null;
+    var mode = "pct", seed = 0;   // what Apply will do: "pct" | "random" | "default"
+    var applied = 0, lastTile = null;
+    function post(body) {
+      return fetch("/api/thumbs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
+        .then(function (r) { return r.json(); });
+    }
+    var ov = document.createElement("div");
+    ov.className = "modal-overlay pin-overlay";
+    ov.innerHTML = '<div class="modal pin-modal thumb-modal" role="dialog" aria-modal="true" aria-labelledby="bt-t">' +
+      '<h2 class="pin-title" id="bt-t">Change thumbnails</h2>' +
+      '<p class="pin-text">Choose how far into each video its thumbnail is taken, tick the ones that look right, then Apply. Those are done and leave the list; the rest stay for another try.</p>' +
+      '<div class="bt-row"><span class="bt-chips">' +
+      [10, 20, 30, 50, 75].map(function (p) { return '<button type="button" class="bt-chip" data-p="' + p + '">' + p + '%</button>'; }).join("") +
+      '</span><input type="range" class="bt-range" min="0" max="95" step="1" value="30" aria-label="Position in the video">' +
+      '<label class="sr-num"><input type="number" class="bt-num" min="0" max="95" step="1" value="30" aria-label="Position in percent">%</label></div>' +
+      '<div class="bt-pick"><button type="button" class="pin-btn bt-all" disabled>Select all</button><span class="bt-count"></span></div>' +
+      '<div class="tp-grid bt-grid"><p class="pin-text">Loading…</p></div>' +
+
+      '<div class="pin-actions confirm-actions"><button type="button" class="pin-btn bt-reset" aria-pressed="false" title="Preview the standard thumbnail (5 seconds in)">Use default</button>' +
+      '<button type="button" class="pin-btn bt-random" aria-pressed="false" title="Preview a different spot in each video. Click again for new spots">Random spots</button>' +
+      '<span class="pin-spacer"></span><button type="button" class="pin-btn bt-cancel">Close</button>' +
+      '<button type="button" class="pin-btn pin-ok cf-safe bt-apply" disabled>Apply</button></div></div>';
+    document.body.appendChild(ov);
+    var grid = ov.querySelector(".bt-grid"), range = ov.querySelector(".bt-range"), num = ov.querySelector(".bt-num"),
+        applyBtn = ov.querySelector(".bt-apply"), btns = ov.querySelectorAll(".pin-actions button"),
+        allBtn = ov.querySelector(".bt-all"), countEl = ov.querySelector(".bt-count");
+    function close() {
+      clearTimeout(timer); ov.remove(); document.removeEventListener("keydown", key, true); if (prev && prev.focus) prev.focus();
+      if (applied && done) done();
+    }
+    function tiles() { return [].slice.call(grid.querySelectorAll(".bt-prev")); }
+    function picked() { return tiles().filter(function (t) { return t.classList.contains("on"); }); }
+    function vids(n) { return n + " video" + (n === 1 ? "" : "s"); }
+    function sync() {   // counts + button labels follow the ticks
+      var all = tiles().length, n = picked().length;
+      ov.querySelector("#bt-t").textContent = "Change thumbnails for " + vids(all);
+      countEl.textContent = n + " of " + all + " selected";
+      allBtn.disabled = !all; allBtn.textContent = all && n === all ? "Select none" : "Select all";
+      applyBtn.textContent = n ? "Apply to " + vids(n) : "Apply"; applyBtn.disabled = !n;
+    }
+    function setTile(t, on) { t.classList.toggle("on", on); t.setAttribute("aria-pressed", on ? "true" : "false"); }
+    grid.addEventListener("click", function (e) {
+      var t = e.target.closest(".bt-prev"); if (!t) return;
+      var on = !t.classList.contains("on"), list = tiles(), a = list.indexOf(lastTile), b = list.indexOf(t);
+      if (e.shiftKey && a !== -1) for (var i = Math.min(a, b); i <= Math.max(a, b); i++) setTile(list[i], on);   // shift: a run
+      else setTile(t, on);
+      lastTile = t; sync();
+    });
+    allBtn.addEventListener("click", function () {
+      var on = picked().length !== tiles().length;
+      tiles().forEach(function (t) { setTile(t, on); }); sync();
+    });
+    function key(e) { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(); } }
+    document.addEventListener("keydown", key, true);
+    ov.addEventListener("mousedown", function (e) { if (e.target === ov) close(); });
+    ov.querySelector(".bt-cancel").addEventListener("click", close);
+    function preview() {
+      var q = mode === "random" ? "seed=" + seed : mode === "default" ? "t=5" : "pct=" + pct;
+      grid.querySelectorAll("img").forEach(function (im) { im.src = "/thumb/" + im.getAttribute("data-id") + "/frame?fast=1&" + q; });
+    }
+    function setMode(m) {
+      mode = m;
+      var rb = ov.querySelector(".bt-random"), db = ov.querySelector(".bt-reset");
+      rb.classList.toggle("on", m === "random"); rb.setAttribute("aria-pressed", m === "random" ? "true" : "false");
+      db.classList.toggle("on", m === "default"); db.setAttribute("aria-pressed", m === "default" ? "true" : "false");
+      ov.querySelector(".bt-row").classList.toggle("off", m !== "pct");
+      if (m !== "pct") ov.querySelectorAll(".bt-chip").forEach(function (c) { c.classList.remove("on"); });
+    }
+    function setPct(v, from) {
+      v = Math.min(95, Math.max(0, Math.round(+v || 0))); pct = v; setMode("pct");
+      if (from !== range) range.value = v;
+      if (from !== num) num.value = v;
+      ov.querySelectorAll(".bt-chip").forEach(function (c) { c.classList.toggle("on", +c.getAttribute("data-p") === v); });
+      clearTimeout(timer); timer = setTimeout(preview, 200);
+    }
+    range.addEventListener("input", function () { setPct(range.value, range); });
+    num.addEventListener("input", function () { if (num.value !== "") setPct(num.value, num); });
+    num.addEventListener("change", function () { setPct(num.value); });
+    num.addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); num.blur(); } });
+    ov.querySelector(".bt-chips").addEventListener("click", function (e) {
+      var c = e.target.closest(".bt-chip"); if (c) setPct(c.getAttribute("data-p"));
+    });
+    function run(extra, msg) {   // apply to the ticked ones; they leave the list, the rest stay
+      var sel = picked();
+      extra.vids = sel.map(function (t) { return t.querySelector("img").getAttribute("data-id"); });
+      btns.forEach(function (b) { b.disabled = true; }); allBtn.disabled = true;
+      applyBtn.textContent = "Working…";
+      post(extra).then(function (d) {
+        if (!d.ok) throw 0;
+        document.querySelectorAll('img[src^="/thumb/"]').forEach(function (im) {   // swap the images on this page
+          if (ov.contains(im)) return;
+          var m = /^\/thumb\/([0-9a-f]{32})(?:\?|$)/.exec(im.getAttribute("src"));
+          if (m && d.srcs[m[1]]) im.src = d.srcs[m[1]];
+        });
+        applied += d.count; lastTile = null;
+        sel.forEach(function (t) { t.remove(); });
+        note(msg(d.count));
+        if (!tiles().length) { close(); return; }
+        btns.forEach(function (b) { b.disabled = false; }); sync();
+      }).catch(function () { btns.forEach(function (b) { b.disabled = false; }); sync(); note("Couldn't change the thumbnails"); });
+    }
+    applyBtn.addEventListener("click", function () {
+      if (mode === "random") run({ random: true, seed: seed }, function (n) { return "Random thumbnails set for " + vids(n); });
+      else if (mode === "default") run({ reset: true }, function (n) { return "Default thumbnails restored for " + vids(n); });
+      else run({ pct: pct }, function (n) { return "Thumbnails updated for " + vids(n); });
+    });
+    ov.querySelector(".bt-random").addEventListener("click", function () {   // each click: new spots
+      seed = Math.floor(Math.random() * 1e9); setMode("random"); preview();
+    });
+    ov.querySelector(".bt-reset").addEventListener("click", function () { setMode("default"); preview(); });
+    var first = { sample: true }; Object.keys(target).forEach(function (k) { first[k] = target[k]; });
+    post(first).then(function (d) {
+      sample = d.sample || []; count = d.count || 0;
+      if (!count) { grid.innerHTML = '<p class="pin-text">No videos here.</p>'; return; }
+      grid.innerHTML = sample.map(function (id) {
+        return '<button type="button" class="tp-opt bt-prev" aria-pressed="false"><img alt="" loading="lazy" data-id="' + id + '"><span class="bt-tick" aria-hidden="true">✓</span></button>';
+      }).join("");
+      sync(); setPct(pct); range.focus();
+    }).catch(function () { grid.innerHTML = '<p class="pin-text">Couldn\u2019t load the videos.</p>'; });
   }
   var TRASH = '<svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true"><path fill="currentColor" d="M6 19a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>';
   var FOLDER_X = '<svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true"><path fill="currentColor" d="M10 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8zm4.6 6 1.4 1.4-1.6 1.6 1.6 1.6-1.4 1.4-1.6-1.6-1.6 1.6-1.4-1.4 1.6-1.6-1.6-1.6 1.4-1.4 1.6 1.6z"/></svg>';
@@ -579,10 +704,30 @@
         ui.className = "pv-ui";
         ui.innerHTML = '<button type="button" class="pv-mute" aria-label="Sound"></button>' +
           '<div class="pv-bar" role="slider" aria-label="Seek preview"><div class="pv-rail"><div class="pv-fill"></div></div>' +
-          '<div class="pv-knob"></div><div class="pv-tip"></div></div><div class="pv-time"></div>';
+          '<div class="pv-knob"></div><div class="pv-frame"></div><div class="pv-tip"></div></div><div class="pv-time"></div>';
         thumb.appendChild(ui);
         var bar = ui.querySelector(".pv-bar"), fill = ui.querySelector(".pv-fill"), knob = ui.querySelector(".pv-knob"),
-            tip = ui.querySelector(".pv-tip"), time = ui.querySelector(".pv-time"), mute = ui.querySelector(".pv-mute");
+            tip = ui.querySelector(".pv-tip"), time = ui.querySelector(".pv-time"), mute = ui.querySelector(".pv-mute"),
+            frame = ui.querySelector(".pv-frame"), want = null, loading = false;
+        // a small frame above the bar showing where the mouse is (like YouTube); made on request, ~0.1 s
+        function frameAt(r) {
+          var bw = bar.offsetWidth, fw = frame.offsetWidth || bw * 0.42;
+          frame.style.left = Math.min(bw - fw / 2, Math.max(fw / 2, r * bw)) + "px";
+          if (!vid.duration) return;
+          var step = Math.max(1, vid.duration / 100);
+          var url = "/thumb/" + id + "/frame?fast=1&t=" + (Math.floor(r * vid.duration / step) * step).toFixed(1);
+          if (url === want) return;
+          want = url;
+          if (!loading) load(url);
+        }
+        function load(url) {
+          loading = true;
+          var im = new Image();
+          im.onload = function () { frame.style.backgroundImage = 'url("' + url + '")'; frame.classList.add("ready"); done(); };
+          im.onerror = done;
+          function done() { loading = false; if (want !== url) load(want); }
+          im.src = url;
+        }
         function syncMute() { mute.innerHTML = vid.muted ? SPK_OFF : SPK_ON; mute.title = vid.muted ? "Unmute" : "Mute"; }
         syncMute();
         mute.addEventListener("click", function (e) {
@@ -610,6 +755,7 @@
         bar.addEventListener("pointermove", function (e) {
           var r = ratioAt(e);
           tip.style.left = r * 100 + "%";
+          frameAt(r);
           if (vid.duration) tip.textContent = pfmt(r * vid.duration);
           if (dragging) seek(e);
         });
@@ -712,6 +858,49 @@
     });
     document.getElementById("sel-save").addEventListener("click", function () {
       openSaveDialog(selected.slice(), "", function (msg) { note(msg + " (" + selected.length + " video" + (selected.length === 1 ? "" : "s") + ")"); });
+    });
+    var selReview = document.getElementById("sel-review");
+    if (selReview) selReview.addEventListener("click", function () {
+      try { sessionStorage.setItem("otube.reviewIds", JSON.stringify(selected)); } catch (e) {}
+      var hs = new URLSearchParams(location.search);
+      location.href = "/review?picked=1" + (hs.get("sort") ? "&sort=" + encodeURIComponent(hs.get("sort")) : "") + (hs.get("seed") ? "&seed=" + hs.get("seed") : "");
+    });
+    var selThumbs = document.getElementById("sel-thumbs");
+    if (selThumbs) selThumbs.addEventListener("click", function () { bulkThumbDialog({ vids: selected.slice() }, clearSel); });
+    var selDelete = document.getElementById("sel-delete");
+    if (selDelete) selDelete.addEventListener("click", function () {
+      var ids = selected.slice(), n = ids.length, s = n === 1 ? "" : "s";
+      confirmDialog({ title: "Delete " + n + " video" + s + "?",
+                      text: "The file" + s + " will be moved to the Recycle Bin on this PC. You can restore them from there.",
+                      confirm: "Move to Recycle Bin", danger: true, icon: TRASH })
+        .then(function (ok) {
+          if (!ok) return;
+          var fd = new FormData(); ids.forEach(function (v) { fd.append("vid", v); });
+          var helperDown = false;
+          fetch("/delete_many", { method: "POST", body: fd })
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+              return d.delegate.reduce(function (p, f) {   // one at a time
+                return p.then(function () {
+                  if (helperDown) return;
+                  return fetch("http://127.0.0.1:8701/recycle", { method: "POST", body: f.path })
+                    .catch(function () { helperDown = true; });
+                });
+              }, Promise.resolve());
+            })
+            .then(function () { fd.append("done", "1"); return fetch("/delete_many", { method: "POST", body: fd }); })
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+              d.deleted.forEach(function (id) {
+                var c = grid.querySelector('.card[data-id="' + id + '"]'); if (c) c.remove();
+              });
+              clearSel();
+              var k = d.deleted.length;
+              if (helperDown && !k) note("The oTube helper isn't running, so nothing was deleted");
+              else note(k + " video" + (k === 1 ? "" : "s") + " moved to the Recycle Bin" + (k < n ? " (" + (n - k) + " couldn't be deleted)" : ""));
+            })
+            .catch(function () { note("Delete failed"); });
+        });
     });
     var selRemove = document.getElementById("sel-remove");
     if (selRemove) selRemove.addEventListener("click", function () {
@@ -890,6 +1079,11 @@
   // --- Folder ⋮ menu (sidebar folders and subfolders) ---
   var fmenu = null, fcur = null;
   var PRIVATE_ON = !!document.querySelector('.mode-btn.on');
+  var unhideBtn = document.getElementById("unhide-btn");
+  if (unhideBtn) unhideBtn.addEventListener("click", function () {
+    postForm("/folder_hidden", { folder_path: unhideBtn.getAttribute("data-folder"), sub: unhideBtn.getAttribute("data-sub"), hidden: "0" })
+      .then(function () { location.reload(); });
+  });
   function fItem(act, label, cls) {
     return '<button type="button" role="menuitem" data-fact="' + act + '"' + (cls ? ' class="' + cls + '"' : '') + '>' + label + '</button>';
   }
@@ -907,10 +1101,16 @@
     ensureMenu();
     var h = fItem("play", "▶&nbsp; Play all") + fItem("shuffle", "🔀&nbsp; Shuffle play") +
       '<div class="ctx-sep"></div>' +
-      fItem("reveal", "Show in Explorer") + fItem("copy", "Copy path");
+      fItem("reveal", "Show in Explorer") + fItem("copy", "Copy path") + fItem("review", "Review videos") + fItem("thumbs", "Change thumbnails…");
+    var hid = row.getAttribute("data-hidden");
+    if (isSub) h += '<div class="ctx-sep"></div>' + (hid === "2"   // inside a hidden folder: follows it
+      ? '<button type="button" role="menuitem" disabled class="ctx-note">Hidden with “' + esc(row.getAttribute("data-hidden-by")) + '”</button>'
+      : fItem(hid === "1" ? "unhide" : "hide", hid === "1" ? "Show on Home" : "Hide from Home"));
     if (!isSub) {
       var priv = row.getAttribute("data-private") === "1";
       h += '<div class="ctx-sep"></div>' +
+        fItem(row.getAttribute("data-hidden") === "1" ? "unhide" : "hide",
+              row.getAttribute("data-hidden") === "1" ? "Show on Home" : "Hide from Home") +
         fItem(priv ? "public" : "private", priv ? "Move to Family mode (make public)" : "Move to Private mode…");
       h += '<div class="ctx-sep"></div>' +
         (row.hasAttribute("data-nomove") || row.getAttribute("data-first") === "1" ? "" : fItem("up", "Move up")) +
@@ -948,7 +1148,7 @@
   function openPlaylistMenu(btn, row) {
     ensureMenu();
     fcur = { btn: btn, row: row, pid: row.getAttribute("data-pid"), name: row.getAttribute("data-name") };
-    var empty = row.getAttribute("data-count") === "0", liked = fcur.pid === "liked";
+    var empty = row.getAttribute("data-count") === "0", liked = fcur.pid === "liked" || fcur.pid === "disliked";   // built-in
     var h = (empty ? "" : fItem("pl-play", "▶&nbsp; Play all") + fItem("pl-shuffle", "🔀&nbsp; Shuffle play") +
       '<div class="ctx-sep"></div>') +
       (liked ? "" : fItem("pl-rename", "Rename…")) +
@@ -975,6 +1175,16 @@
           if (navigator.clipboard) navigator.clipboard.writeText(c.host);
           note("Helper not running (start oTube from its desktop icon). Path copied to clipboard.");
         });
+    } else if (act === "thumbs") {
+      bulkThumbDialog({ folder: c.folder, sub: c.sub });
+    } else if (act === "review") {
+      var ps = new URLSearchParams(location.search).get("sort");
+      location.href = "/review?path=" + encodeURIComponent(c.folder.replace(/\/+$/, "") + (c.sub ? "/" + c.sub : "")) + (ps ? "&sort=" + encodeURIComponent(ps) : "");
+    } else if (act === "hide" || act === "unhide") {
+      postForm("/folder_hidden", { folder_path: c.folder, sub: c.sub, hidden: act === "hide" ? "1" : "0" }).then(function () {
+        if (act === "hide") note('"' + c.name + '" is hidden from Home. Open it from the sidebar any time.');
+        setTimeout(function () { location.reload(); }, act === "hide" ? 900 : 0);
+      });
     } else if (act === "public") {
       postForm("/folder_private", { folder_path: c.folder, private: "0" }).then(function () { location.reload(); });
     } else if (act === "private") {
@@ -1070,7 +1280,7 @@
     });
   }
 
-  // --- Show in folder / Open in player ---
+  // --- Show in Explorer / Open in player ---
   // Run directly by the server when it's on the PC; when it runs in Docker the
   // server returns the host path and we pass it to the on-PC helper
   // (otube-helper.ps1, started by the launcher, listening on 127.0.0.1 only).
@@ -1119,7 +1329,8 @@
       }
       info.btn.classList.add("open");
       menu.hidden = false;
-      var r = info.btn.getBoundingClientRect();
+      var r = info.at ? { left: info.at.x, right: info.at.x + menu.offsetWidth, top: info.at.y, bottom: info.at.y }
+                      : info.btn.getBoundingClientRect();   // at: right-click spot
       var mw = menu.offsetWidth || 220, mh = menu.offsetHeight || 260;
       var left = Math.min(r.right - mw, window.innerWidth - mw - 8);
       var top = r.bottom + 4;
@@ -1128,24 +1339,52 @@
       menu.style.top = top + "px";
     }
 
+    function menuFor(btn, at) {
+      var src = btn.closest("[data-id]") || btn;  // card on home, the button itself on watch
+      openMenu({
+        btn: btn, card: btn.closest(".card, .sv-card, .rv-row"), at: at || null,
+        id: src.getAttribute("data-id"),
+        name: src.getAttribute("data-name") || "",
+        path: src.getAttribute("data-path") || "",
+        watch: !!btn.getAttribute("data-watch"),
+      });
+      var first = menu.querySelector("button"); if (first && !at) first.focus();
+    }
     document.addEventListener("click", function (e) {
       var btn = e.target.closest(".card__more, .watch-more");
       if (btn) {
         e.preventDefault(); e.stopPropagation();
         if (current && current.btn === btn) { closeMenu(); return; }
-        var src = btn.closest("[data-id]") || btn;  // card on home, the button itself on watch
-        openMenu({
-          btn: btn, card: btn.closest(".card"),
-          id: src.getAttribute("data-id"),
-          name: src.getAttribute("data-name") || "",
-          path: src.getAttribute("data-path") || "",
-          watch: !!btn.getAttribute("data-watch"),
-        });
+        menuFor(btn);
         return;
       }
       if (!menu.hidden && !menu.contains(e.target)) closeMenu();
     });
-    document.addEventListener("keydown", function (e) { if (e.key === "Escape") closeMenu(); });
+    // Right-click a card, or Shift+F10 / the Menu key on a focused card: the same menu
+    document.addEventListener("contextmenu", function (e) {
+      var card = e.target.closest(".card, .sv-card, .rv-row");
+      var btn = card && card.querySelector(".card__more");
+      if (!btn || e.target.closest("input, textarea")) return;
+      e.preventDefault();
+      closeMenu();
+      menuFor(btn, e.clientX || e.clientY ? { x: e.clientX, y: e.clientY } : null);
+    });
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape") { closeMenu(); return; }
+      if ((e.key === "F10" && e.shiftKey) || e.key === "ContextMenu") {
+        var card = document.activeElement && document.activeElement.closest && document.activeElement.closest(".card, .sv-card, .rv-row");
+        var btn = card && card.querySelector(".card__more");
+        if (!btn) return;
+        e.preventDefault(); closeMenu(); menuFor(btn);
+      }
+    });
+    menu.addEventListener("keydown", function (e) {   // arrow keys move through the menu
+      if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+      var items = [].slice.call(menu.querySelectorAll("button:not([disabled])")), i = items.indexOf(document.activeElement);
+      e.preventDefault();
+      items[(i + (e.key === "ArrowDown" ? 1 : items.length - 1)) % items.length].focus();
+    });
+    window.addEventListener("scroll", function () { if (!menu.hidden) closeMenu(); }, true);
 
     menu.addEventListener("click", function (e) {
       var b = e.target.closest("button"); if (!b || !current) return;
@@ -1154,7 +1393,12 @@
       var card = current.card, isWatch = current.watch;
       closeMenu();
 
-      if (act === "save") {
+      if (act === "play") {
+        var link = card && card.querySelector("a.thumb");
+        if (link) link.click();   // a.thumb: honours GOM mode
+        else if (card && card.classList.contains("rv-row")) card.dispatchEvent(new CustomEvent("otube:play", { bubbles: true }));
+        else location.href = "/watch/" + id;
+      } else if (act === "save") {
         openSaveDialog(id, name);
       } else if (act === "pl-up" || act === "pl-down" || act === "pl-remove") {
         var pid = grid && grid.getAttribute("data-playlist");
@@ -1176,7 +1420,11 @@
           var fd = new FormData(); fd.append("name", nn.trim());
           fetch("/rename/" + id, { method: "POST", body: fd })
             .then(function (res) { return res.json(); })
-            .then(function (d) { if (d.ok) location.reload(); else alert("Rename failed: " + (d.error || "")); })
+            .then(function (d) {
+              if (!d.ok) { alert("Rename failed: " + (d.error || "")); return; }
+              if (card && card.classList.contains("rv-row")) card.dispatchEvent(new CustomEvent("otube:renamed", { bubbles: true }));
+              else location.reload();
+            })
             .catch(function () { alert("Rename failed."); });
         }
       } else if (act === "delete") {
@@ -1188,7 +1436,8 @@
             .then(function (res) { return res.json(); })
             .then(function (d) {
               if (!d.ok) { alert("Delete failed: " + (d.error || "")); return; }
-              if (isWatch) window.location.href = "/"; else if (card) card.remove();
+              document.dispatchEvent(new CustomEvent("otube:deleted", { detail: { id: id } }));
+              if (isWatch) window.location.href = "/"; else if (card && !card.classList.contains("sv-card") && !card.classList.contains("rv-row")) card.remove();
             })
             .catch(function () { alert("Delete failed."); });
         });
@@ -1222,6 +1471,7 @@
     saveDirty = false;
   }
   // vids: one id or an array; title: label shown under the heading.
+  window.otubeSave = function (vids, title, onDone) { openSaveDialog(vids, title, onDone); };
   function openSaveDialog(vids, title, onDone) {
     vids = [].concat(vids);
     var n = vids.length;
@@ -1336,17 +1586,44 @@
     t.textContent = msg; t.classList.add("show");
     clearTimeout(flash._t); flash._t = setTimeout(function () { t.classList.remove("show"); }, 2500);
   }
-  var like = document.getElementById("like-btn");
-  if (like) like.addEventListener("click", function () {
-    fetch("/api/like/" + like.getAttribute("data-id"), { method: "POST" }).then(function (r) { return r.json(); })
+  // Like / Dislike (cards and watch page). Clicking the active one clears it. The videos
+  // collect in the built-in "Liked videos" / "Disliked videos" playlists.
+  function syncRate(box) {
+    var r = box.getAttribute("data-rate");
+    box.querySelectorAll(".rate-btn").forEach(function (b) {
+      var on = b.getAttribute("data-r") === r;
+      b.classList.toggle("on", on); b.setAttribute("aria-pressed", on ? "true" : "false");
+    });
+  }
+  document.querySelectorAll(".card, .yt-rate").forEach(function (box) { if (box.querySelector(".rate-btn")) syncRate(box); });
+  document.addEventListener("click", function (e) {
+    var b = e.target.closest(".rate-btn"); if (!b) return;
+    var box = b.closest("[data-rate]"); if (!box) return;
+    e.preventDefault(); e.stopPropagation();
+    var id = box.getAttribute("data-id"), want = b.getAttribute("data-r");
+    var rating = box.getAttribute("data-rate") === want ? "none" : want;
+    fetch("/api/rate/" + id, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rating: rating }) })
+      .then(function (r) { return r.json(); })
       .then(function (d) {
         if (!d.ok) return;
-        like.classList.toggle("on", d.liked);
-        like.setAttribute("aria-pressed", d.liked ? "true" : "false");
-        like.querySelector(".yt-like__label").textContent = d.liked ? "Liked" : "Like";
-        flash(d.liked ? "Added to Liked videos" : "Removed from Liked videos");
+        box.setAttribute("data-rate", d.rating === "none" ? "" : d.rating);
+        syncRate(box);
+        var marks = d.rating !== "none" && (window.OTUBE || {}).rateMarksWatched && window.otubeMarkWatched;
+        if (marks) {   // Settings → "Like or dislike marks as watched"
+          window.otubeMarkWatched([id], true);
+          document.dispatchEvent(new CustomEvent("otube:watched", { detail: { ids: [id] } }));
+        }
+        Object.keys(d.counts || {}).forEach(function (pid) {   // sidebar counts
+          var row = document.querySelector('.pl-item[data-pid="' + pid + '"]');
+          if (row) { row.setAttribute("data-count", d.counts[pid]); row.querySelector(".nav-count").textContent = d.counts[pid]; }
+        });
+        // viewing Liked/Disliked videos: a video that left the list leaves the grid
+        var list = new URLSearchParams(location.search).get("playlist");
+        if (box.classList.contains("card") && (list === "liked" && d.rating !== "like" || list === "disliked" && d.rating !== "dislike")) box.remove();
+        flash((d.rating === "like" ? "Added to Liked videos" : d.rating === "dislike" ? "Added to Disliked videos"
+          : want === "like" ? "Removed from Liked videos" : "Removed from Disliked videos") + (marks ? " · marked as watched" : ""));
       });
-  });
+  }, true);
   var share = document.getElementById("share-btn");
   if (share) share.addEventListener("click", function () {
     var u = new URL(location.href);
@@ -1534,8 +1811,12 @@
   syncToggle();
   toggle.addEventListener("click", function () {
     on = !on; set(MODE_KEY, on); syncToggle();
+    if (on && window.otubeGom) window.otubeGom.off();   // one or the other
     flash(on ? "Mini player on: videos play here without leaving the page" : "Mini player off: videos open on their own page");
   });
+  window.otubeMini = { off: function () { if (on) { on = false; set(MODE_KEY, false); syncToggle(); } },
+                       // play here whatever the mode (pages where leaving would lose your place)
+                       play: function (path, t) { open(path, t || 0, dock.classList.contains("mini--large")); } };
 
   var ICON = function (d) { return '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="' + d + '"/></svg>'; };
   var dock = document.createElement("div");
@@ -1545,6 +1826,7 @@
     '<div class="mini__bar">' +
     '  <span class="mini__title"></span>' +
     '  <button type="button" class="mini__btn mini__mark" data-m="mark" title="Mark as watched" aria-pressed="false">' + ICON("M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z") + '</button>' +
+    (document.pictureInPictureEnabled ? '  <button type="button" class="mini__btn" data-m="pip" title="Pop out: a floating window you can put anywhere on the screen">' + ICON("M19 7h-8v6h8V7zm2-4H3a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h18a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2zm0 16.01H3V4.98h18v14.03z") + '</button>' : '') +
     '  <button type="button" class="mini__btn" data-m="size" title="Larger (Esc to shrink)">' + ICON("M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z") + '</button>' +
     '  <button type="button" class="mini__btn" data-m="page" title="Open full page">' + ICON("M19 19H5V5h7V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z") + '</button>' +
     '  <button type="button" class="mini__btn" data-m="close" title="Close">' + ICON("M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z") + '</button>' +
@@ -1554,6 +1836,15 @@
   scrim.className = "mini-scrim"; scrim.hidden = true;
   document.body.appendChild(scrim); document.body.appendChild(dock);
   var frame = dock.querySelector("iframe"), titleEl = dock.querySelector(".mini__title");
+  // keyboard goes to the mini player as soon as it starts (←/→ seek, Space, K/J/L, F...)
+  function focusPlayer() {
+    try {
+      frame.focus(); frame.contentWindow.focus();
+      var d = frame.contentDocument, el = d && (d.getElementById("player-wrap") || d.body);
+      if (el) { if (!el.hasAttribute("tabindex")) el.setAttribute("tabindex", "-1"); el.focus({ preventScroll: true }); }
+    } catch (e) {}
+  }
+  frame.addEventListener("load", function () { if (frame.src && frame.src !== "about:blank") focusPlayer(); });
   var state = null;  // {path, vid, t, title, large}
 
   function flash(msg) {
@@ -1634,7 +1925,14 @@
       flash(done ? "Marked as unwatched" : "Marked as watched");
     }
     else if (m === "close") close();
-    else if (m === "size") setLarge(!dock.classList.contains("mini--large"));
+    else if (m === "pip") {   // browser's floating window: can go anywhere on screen, even outside the browser
+      try {
+        var v = frame.contentDocument.querySelector("video");
+        if (frame.contentDocument.pictureInPictureElement) frame.contentDocument.exitPictureInPicture();
+        else if (v) v.requestPictureInPicture().catch(function () { flash("Pop-out isn't available for this video"); });
+      } catch (err) {}
+    }
+    else if (m === "size") { setLarge(!dock.classList.contains("mini--large")); focusPlayer(); }
     else if (m === "page" && state) location.href = "/watch/" + state.vid + (state.t > 1 ? "?t=" + Math.floor(state.t) : "");
   });
   scrim.addEventListener("click", function () { setLarge(false); });
@@ -1646,15 +1944,16 @@
   // Double-click the bar to reset size and position.
   var BAR_H = 40, MIN_W = 260;
   var pos = get(POS_KEY, null);  // {x, y, w}
-  function maxW() { return Math.max(MIN_W, Math.min(innerWidth - 16, (innerHeight - 80 - BAR_H) * 16 / 9)); }
+  function maxW() { return Math.max(MIN_W, Math.min(innerWidth, (innerHeight - BAR_H) * 16 / 9)); }
   function hFor(w) { return Math.round(w * 9 / 16) + BAR_H; }
   function place() {
     if (dock.classList.contains("mini--large")) { dock.style.left = dock.style.top = dock.style.width = ""; return; }
     if (!pos) { dock.style.left = dock.style.top = dock.style.width = ""; dock.style.right = dock.style.bottom = ""; return; }
     var w = Math.min(Math.max(MIN_W, pos.w || dock.offsetWidth || 400), maxW()), h = hFor(w);
     dock.style.width = w + "px";
-    dock.style.left = Math.min(Math.max(8, pos.x), innerWidth - w - 8) + "px";
-    dock.style.top = Math.min(Math.max(64, pos.y), innerHeight - h - 8) + "px";
+    var keep = 120;   // px of the bar that always stays on screen, so it can be dragged back
+    dock.style.left = Math.min(Math.max(keep - w, pos.x), innerWidth - keep) + "px";
+    dock.style.top = Math.min(Math.max(0, pos.y), innerHeight - BAR_H) + "px";   // may cover the top bar
     dock.style.right = dock.style.bottom = "auto";
   }
   ["nw", "ne", "sw", "se"].forEach(function (c) {
@@ -1720,6 +2019,64 @@
   if (prev && prev.path) open(prev.path, prev.t, prev.large);
 })();
 
+// ===== GOM mode: clicking a video plays it in GOM Player on this PC (via the oTube helper) =====
+(function () {
+  "use strict";
+  var KEY = "otube.gomMode", HELPER = "http://127.0.0.1:8701/";
+  var toggle = document.getElementById("gom-toggle");
+  function get() { try { return JSON.parse(localStorage.getItem(KEY)) === true; } catch (e) { return false; } }
+  function set(v) { try { localStorage.setItem(KEY, JSON.stringify(v)); } catch (e) {} }
+  var on = get();
+  function toast(msg) {
+    var t = document.getElementById("note-toast");
+    if (!t) { t = document.createElement("div"); t.id = "note-toast"; t.className = "note-toast"; document.body.appendChild(t); }
+    t.textContent = msg; t.classList.add("show");
+    clearTimeout(toast._t); toast._t = setTimeout(function () { t.classList.remove("show"); }, 2800);
+  }
+  function sync() { if (toggle) { toggle.classList.toggle("on", on); toggle.setAttribute("aria-pressed", on ? "true" : "false"); } }
+  sync();
+  window.otubeGom = { off: function () { if (on) { on = false; set(false); sync(); } },
+                      // true when GOM mode is on and it took the video
+                      play: function (href) { if (!on) return false; play(href.split("?")[0].split("/").pop(), href); return true; } };
+  if (toggle) toggle.addEventListener("click", function () {
+    on = !on; set(on); sync();
+    if (on && window.otubeMini) window.otubeMini.off();   // GOM replaces the mini player
+    toast(on ? "GOM Player on: clicking a video plays it in GOM Player" : "GOM Player off: videos play in oTube");
+  });
+
+  function play(id, href) {
+    return fetch("/gom/" + id, { method: "POST" })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (!d.ok) throw new Error(d.error || "Failed");
+        if (!d.delegate) return;   // server launched it
+        return fetch(HELPER + "gom", { method: "POST", body: d.delegate }).then(function (r) {
+          if (r.status === 404) throw new Error("GOM Player isn't installed on this PC");
+          if (!r.ok) throw new Error("Couldn't start GOM Player");
+        });
+      })
+      .then(function () {
+        var card = document.querySelector('.card[data-id="' + id + '"]');
+        var name = card && card.querySelector(".card__title, .title");
+        toast("Playing in GOM Player" + (name ? ": " + name.textContent.trim() : ""));
+      })
+      .catch(function (err) {   // helper not running or GOM missing: play here instead
+        toast((err && err.message && err.message !== "Failed to fetch" ? err.message : "The oTube helper isn't running") + ". Playing in oTube instead.");
+        setTimeout(function () { location.href = href; }, 1200);
+      });
+  }
+  // capture phase: runs before the mini player and normal navigation (plain left-clicks only)
+  document.addEventListener("click", function (e) {
+    if (!on || e.defaultPrevented || e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+    var a = e.target.closest('a[href^="/watch/"]');
+    if (!a || a.closest(".mini")) return;
+    var id = a.getAttribute("href").split("?")[0].split("/").pop();
+    if (!id) return;
+    e.preventDefault(); e.stopPropagation();
+    play(id, a.getAttribute("href"));
+  }, true);
+})();
+
 // keep the sticky content bar right under the (variable-height) sticky chips
 (function () {
   var chips = document.querySelector(".chips-sticky");
@@ -1746,11 +2103,15 @@
   function render(d) {
     last = d;
     var th = d.thumbs, caps = d.captions || [], cap = caps[0], m = mode(), left = th.total - th.done;
-    var active = th.running || caps.length > 0;
+    var sim = d.similar || {}, active = th.running || caps.length > 0 || sim.running;
     ctl.hidden = m === "never" || !(active || m === "always" || open);
     ctl.classList.toggle("busy", active);
     var t1, t2, p;
-    if (th.running || !cap) {
+    if (sim.running && !th.running && !cap) {
+      t1 = "Similar " + pct(sim.done, sim.total) + "%";
+      t2 = sim.done + "/" + sim.total;
+      p = sim.total ? sim.done / sim.total : 1;
+    } else if (th.running || !cap) {
       t1 = th.running ? "Thumbnails " + pct(th.done, th.total) + "%" : left ? "Thumbnails" : "All ready";
       t2 = left ? th.done + "/" + th.total : "✓";
       p = th.total ? th.done / th.total : 1;
@@ -1779,6 +2140,13 @@
           (c.state === "running" ? Math.floor(c.progress * 100) + "%" : "queued");
         li.title = c.title; ul.appendChild(li);
       });
+    }
+    var sr = row("similar");
+    sr.hidden = !sim.running;
+    if (sim.running) {
+      chip(sr, "run", "Running");
+      sr.querySelector(".tk-bar i").style.width = pct(sim.done, sim.total) + "%";
+      sr.querySelector(".tk-count").textContent = sim.done + " of " + sim.total + " videos analysed";
     }
     pop.querySelector(".tk-sum").textContent = active ? "Working…" : "Idle";
     schedule(active || open ? 2000 : 12000);

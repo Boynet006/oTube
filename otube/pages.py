@@ -9,16 +9,17 @@ import time
 
 from flask import Response, abort, render_template, request, send_file, url_for
 
-from .core import (
-    AUTO_SUBS_DIR, BASE, HOST_ROOT, LIKED_ID, SETTINGS_DEFAULTS, SORT_ICONS, THUMB_DIR,
+from .core import (folder_path, hidden_by, hidden_folders, hidden_here, SETTINGS_RANGES, 
+    AUTO_SUBS_DIR, BASE, HOST_ROOT, SETTINGS_DEFAULTS, SORT_ICONS, THUMB_DIR,
     VIDEO_EXTS, WHISPER_MODELS, _scan_state, allowed, app, dir_names, enrich, find_playlist,
     fmt_size, folder_shown, folder_trees, get_rec, get_settings, load_config, load_playlists,
-    private_folders, private_unlocked, probe_duration, rel_time, rescan_now, save_config, scan,
+    private_folders, private_unlocked, probe_duration, ratings, rel_time, rescan_now, save_config, scan,
     scan_hooks, sub_level, to_host, to_local, unique, visible,
 )
 from .captions import LANG_NAMES, _jobs
 from .media import _wake_warmer, _warm_state, thumb_url
 from .progress import page_progress
+from .similar import task_status as similar_status
 
 
 @app.route("/")
@@ -31,6 +32,8 @@ def index():
     sub = request.args.get("sub", "").strip("/")
     sort = request.args.get("sort") or get_settings()["sort"]
     playlist = find_playlist(pls, request.args.get("playlist", ""))
+    off = hidden_folders(cfg)   # "Hide from Home": hidden everywhere until shown again
+    videos = [v for v in videos if not hidden_here(v, off)]
     if playlist:
         # Playlist order is the user's order; skip items whose file is gone.
         by_id = {v["id"]: v for v in videos}
@@ -58,12 +61,15 @@ def index():
             keyfn, rev = keys.get(sort, keys["name"])
             videos.sort(key=keyfn, reverse=rev)
     hidden = private_folders(cfg)
+    hidden_set = hidden_folders(cfg)
     unlocked = private_unlocked()
     folders = [f for f in cfg.get("video_folders", []) if folder_shown(f, hidden)]
     return render_template("index.html", videos=videos, folders=folders,
                            current_folder=folder, current_sub=sub, sort=sort,
                            folder_trees=(trees := folder_trees(all_items, folders)),
-                           total_count=len({v["id"] for v in all_items if v["folder"] in trees}),
+                           total_count=len({v["id"] for v in all_items if v["folder"] in trees and not hidden_here(v, hidden_set)}),
+                           hidden_set=hidden_set,
+                           hidden_view=hidden_by(folder_path(folder, sub), hidden_set) if folder else "",
                            sub_level=sub_level(trees, folder, sub),
                            playlists=pls, playlist=playlist,
                            private_on=unlocked, private_set=hidden, has_pin=bool(cfg.get("pin_hash")))
@@ -89,14 +95,11 @@ def watch(vid):
         prev_vid = items[pos - 1]["id"] if pos > 0 else None
     else:
         playlist, pos, prev_vid = None, 0, None
-        same = [v for v in everything if v["folder"] == r["folder"] and v["id"] != vid]
-        other = [v for v in everything if v["folder"] != r["folder"]]
-        upnext = same + other
+        upnext = recommend(r, everything)
         next_vid = upnext[0]["id"] if upnext else None
     probe_duration(r["path"], r["mtime"])  # just this one file, if not cached yet
     cur = next((v for v in enrich([r])), None)
     next_item = next((v for v in upnext if v["id"] == next_vid), None)
-    liked = find_playlist(load_playlists(), LIKED_ID)
     cfg = load_config()
     if request.args.get("embed"):
         # Player-only page used inside the mini player (keeps list/shuffle + embed on next/prev)
@@ -108,14 +111,64 @@ def watch(vid):
                            playlist=playlist, pos=pos, shuffle_seed=shuffle_seed,
                            lq=("?list=" + playlist["id"] + ("&shuffle=" + shuffle_seed if shuffle_seed else "")) if playlist else "",
                            folder_count=sum(1 for v in everything if v["folder"] == r["folder"]),
-                           liked=bool(liked and vid in liked["items"]),
+                           rating=ratings().get(vid, ""),
                            private_on=private_unlocked(), has_pin=bool(cfg.get("pin_hash")),
                            # sidebar drawer
                            folders=[f for f in cfg.get("video_folders", [])
                                     if folder_shown(f, private_folders(cfg))],
-                           playlists=load_playlists(), private_set=private_folders(cfg),
+                           playlists=load_playlists(), private_set=private_folders(cfg), hidden_set=hidden_folders(cfg),
                            current_folder="", current_sub="", sort="name",
                            folder_trees=folder_trees(scan(), cfg.get("video_folders", [])))
+
+
+UPNEXT_SIZE = 40
+
+
+def recommend(r: dict, everything: list[dict], rng: random.Random | None = None) -> list[dict]:
+    """The "Up next" rail, made fresh for every video like YouTube's: first the next file
+    in the folder (what autoplay plays, so series stay in order), then a shuffled mix of
+    about two from the same folder (the next few files first) to one from elsewhere.
+    Unwatched videos rank higher, watched ones sink (progress shared by all devices)."""
+    rng = rng or random.Random()
+    prog = page_progress()
+
+    def watched(v):
+        e = prog.get(v["id"]) or {}
+        if e.get("del"):
+            return 0.0
+        return 1.0 if e.get("w") else (e.get("t", 0) / e["d"] if e.get("d") else 0.0)
+
+    rated = ratings()
+    off = hidden_folders()   # hidden folders only show up next to their own videos
+    everything = [v for v in everything if not hidden_here(v, off) or v["id"] == r["id"]]
+
+    def weight(v):   # random, nudged by watch state: unwatched > half-watched > watched; disliked last
+        w = watched(v)
+        return rng.random() * (0.2 if w >= 0.97 else 1.3 if w > 0.02 else 1.0) * (0.05 if rated.get(v["id"]) == "dislike" else 1)
+
+    def order(v):
+        return (v.get("subdir", ""), v["title"].lower())
+
+    folder = sorted((v for v in everything if v["folder"] == r["folder"]), key=order)
+    i = next((n for n, v in enumerate(folder) if v["id"] == r["id"]), -1)
+    after = folder[i + 1:] if i >= 0 else []
+    head = [after[0]] if after else []
+    soon = {v["id"] for v in after[1:6]}   # the following episodes rank higher
+    same = sorted((v for v in folder if v["id"] != r["id"] and v not in head),
+                  key=lambda v: -(weight(v) + (0.6 if v["id"] in soon else 0)))
+    others = [v for v in everything if v["folder"] != r["folder"] and rated.get(v["id"]) != "dislike"]
+    others = sorted(rng.sample(others, min(len(others), UPNEXT_SIZE * 3)), key=lambda v: -weight(v))
+    out = list(head)
+    while len(out) < UPNEXT_SIZE and (same or others):
+        for pool, n in ((same, 2), (others, 1)):
+            for _ in range(n):
+                if pool and len(out) < UPNEXT_SIZE:
+                    out.append(pool.pop(0))
+        if not same and others:
+            out += others[:UPNEXT_SIZE - len(out)]; others = []
+        if not others and same:
+            out += same[:UPNEXT_SIZE - len(out)]; same = []
+    return out
 
 
 @app.route("/api/tasks")
@@ -135,7 +188,7 @@ def api_tasks():
                      "progress": round(j.get("progress") or 0, 3), "lang": LANG_NAMES.get(lang, lang)})
     caps.sort(key=lambda c: c["state"] != "running")
     return {"thumbs": {"done": thumbs, "total": len(ids), "running": _warm_state["busy"] and thumbs < len(ids)},
-            "captions": caps}
+            "captions": caps, "similar": similar_status()}
 
 
 @app.route("/browse")
@@ -185,7 +238,7 @@ def browse():
 def _browse_host(path: str):
     """Folder browser over the mounted host drives, speaking Windows paths."""
     if not path:
-        drives = sorted(d for d in os.listdir(HOST_ROOT) if os.path.isdir(os.path.join(HOST_ROOT, d)))
+        drives = sorted(d for d in os.listdir(HOST_ROOT) if len(d) == 1 and os.path.isdir(os.path.join(HOST_ROOT, d)))  # drive letters only (skips wsl, wslg)
         return {"path": "", "parent": None, "is_root": True, "video_count": 0,
                 "dirs": [{"name": f"{d.upper()}:/", "path": f"{d.upper()}:/"} for d in drives]}
     local = to_local(path)
@@ -228,7 +281,8 @@ def compress(resp):
 
 @app.context_processor
 def inject_settings():
-    return {"app_settings": get_settings(), "thumb_url": thumb_url, "page_progress": page_progress}
+    return {"app_settings": get_settings(), "thumb_url": thumb_url, "page_progress": page_progress, "ratings": ratings,
+            "hidden_by": hidden_by}
 
 
 @app.route("/settings")
@@ -414,6 +468,9 @@ def api_settings():
                     v = str(v)
             except (TypeError, ValueError):
                 continue
+            if k in SETTINGS_RANGES:
+                lo, hi = SETTINGS_RANGES[k]
+                v = min(hi, max(lo, v))
             if k == "sort" and v not in ("name", "newest", "size", "duration", "random"):
                 continue
             if k == "view" and v not in ("grid", "list"):

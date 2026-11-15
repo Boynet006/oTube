@@ -1,0 +1,20 @@
+{# The one per-video file menu (Home cards, the watch page, Similar videos). Opened by the ⋮ / … button,
+   right-click, or Shift+F10 / the Menu key on a focused card. #}
+  <div class="ctx-menu" id="ctx-menu" role="menu" hidden>
+    {% if ctx_page != 'watch' %}<button data-act="play">Play</button>{% endif %}
+    <button data-act="save">Save to playlist…</button>
+    {% if playlist %}
+    <button data-act="pl-up">Move up</button>
+    <button data-act="pl-down">Move down</button>
+    <button data-act="pl-remove">Remove from playlist</button>
+    {% endif %}
+    <div class="ctx-sep"></div>
+    <button data-act="reveal">Show in Explorer</button>
+    <button data-act="open">Open in player</button>
+    <button data-act="copy">Copy path</button>
+    <button data-act="rename">Rename…</button>
+    <button data-act="thumb">Change thumbnail…</button>
+    <button data-act="mark">Mark as watched</button>
+    <div class="ctx-sep"></div>
+    <button data-act="delete" class="danger">Delete from disk…</button>
+  </div>

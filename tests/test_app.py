@@ -146,3 +146,202 @@ def test_progress_newest_wins(client, ids, progress_module):
 def test_progress_rejects_junk(client):
     assert client.post("/api/progress", json={"entries": {"x" * 100: {"t": 1}, "y": "nope", "z": {"t": "bad"}}}).get_json()["ok"]
     assert not set(client.get("/api/progress").get_json()["progress"]) & {"y", "z"}
+
+
+# ---- "Up next" rail ----
+def test_up_next_starts_with_next_file_and_changes_each_time(ids):
+    import random
+    from otube import core, pages
+    with pages.app.test_request_context():
+        everything = core.unique(core.visible(core.enrich(core.scan())))
+        r = core.get_rec(ids["clip.ts"])
+        lists = [pages.recommend(r, everything, random.Random(seed)) for seed in range(8)]
+    folder = sorted((v for v in everything if v["folder"] == r["folder"]), key=lambda v: v["title"].lower())
+    nxt = folder[folder.index(next(v for v in folder if v["id"] == r["id"])) + 1]
+    for up in lists:
+        assert up[0]["id"] == nxt["id"]                      # autoplay: the next file in the folder
+        assert r["id"] not in {v["id"] for v in up}          # never the video being watched
+        assert len(up) == len({v["id"] for v in up}) <= pages.UPNEXT_SIZE
+    assert len({tuple(v["id"] for v in up[1:]) for up in lists}) > 1   # the rest is reshuffled
+
+
+# ---- settings ----
+def test_select_reach_setting_is_clamped(client):
+    post = lambda v: client.post("/api/settings", json={"selectReach": v}).get_json()["settings"]["selectReach"]  # noqa: E731
+    assert post(20) == 20 and post(999) == 40 and post(-5) == 0
+    assert "--sel-reach: 0px" in client.get("/").get_data(as_text=True)
+    assert b'class="sr-num"' in client.get("/settings").data
+    client.post("/api/settings", json={"selectReach": 14})
+
+
+# ---- Like / Dislike ----
+def test_like_dislike(client, ids):
+    vid = ids["clip.ts"]
+    rate = lambda r: client.post(f"/api/rate/{vid}", json={"rating": r}).get_json()  # noqa: E731
+    d = rate("like")
+    assert d["rating"] == "like" and d["counts"]["liked"] == 1 and d["counts"]["disliked"] == 0
+    d = rate("dislike")                                       # one or the other, never both
+    assert d["counts"] == {"liked": 0, "disliked": 1}
+    assert 'data-rate="dislike"' in client.get("/").get_data(as_text=True)
+    assert client.get("/?playlist=disliked").status_code == 200
+    names = [p["name"] for p in client.get("/api/playlists").get_json()["playlists"]]
+    assert "Liked videos" in names and "Disliked videos" not in names   # Save dialog
+    assert client.post("/api/playlists/disliked/delete").status_code == 400   # built-in
+    assert rate("none")["counts"] == {"liked": 0, "disliked": 0}
+    assert client.post(f"/api/rate/{vid}", json={"rating": "love"}).status_code == 400
+
+
+# ---- removing a folder cleans up after it ----
+def test_removing_a_folder_deletes_its_thumbnails(client, ids):
+    import os, shutil, tempfile
+    from otube import core, library
+    extra = tempfile.mkdtemp(prefix="otube-extra-")
+    lib = os.path.dirname(core.get_rec(ids["clip.ts"])["path"])
+    shutil.copy(os.path.join(lib, "old.avi"), os.path.join(extra, "gone.avi"))
+    cfg = core.load_config(); cfg["video_folders"].append(extra); core.save_config(cfg); core.rescan_now()
+    gone = core.vid_id(os.path.join(extra, "gone.avi"))
+    thumb = lambda v: os.path.join(core.THUMB_DIR, v + ".jpg")  # noqa: E731
+    for v in (gone, ids["clip.ts"]):
+        open(thumb(v), "wb").close()
+    # a library folder on an unplugged drive: nothing is pruned
+    cfg = core.load_config(); cfg["video_folders"].append("/nope/unplugged"); core.save_config(cfg)
+    assert library.prune_orphans() == 0
+    cfg["video_folders"].remove("/nope/unplugged"); core.save_config(cfg)
+    client.post(f"/api/rate/{gone}", json={"rating": "like"})
+    client.post("/remove_folder", data={"folder_path": extra})
+    assert gone not in core.find_playlist(core.load_playlists(), core.LIKED_ID)["items"]   # likes too
+    assert not os.path.exists(thumb(gone))            # removed folder's thumbnail: gone
+    assert os.path.exists(thumb(ids["clip.ts"]))       # the rest: kept
+
+
+# ---- Hide from Home ----
+def test_hide_folder_from_home(client, ids):
+    import os, random, shutil, tempfile
+    from otube import core, pages
+    extra = tempfile.mkdtemp(prefix="otube-hide-")
+    lib = os.path.dirname(core.get_rec(ids["clip.ts"])["path"])
+    shutil.copy(os.path.join(lib, "old.avi"), os.path.join(extra, "secret.avi"))
+    cfg = core.load_config(); cfg["video_folders"].append(extra); core.save_config(cfg); core.rescan_now()
+    sid = core.vid_id(os.path.join(extra, "secret.avi"))
+    assert sid in client.get("/").get_data(as_text=True)
+    assert client.post("/folder_hidden", data={"folder_path": extra, "hidden": "1"}).get_json()["ok"]
+    assert sid not in client.get("/").get_data(as_text=True)                                   # off Home
+    opened = client.get("/", query_string={"folder": extra}).get_data(as_text=True)
+    assert sid not in opened and 'id="unhide-btn"' in opened                                  # hidden there too, with "Show on Home"
+    assert client.get(f"/watch/{sid}").status_code == 200                                     # and plays
+    with pages.app.test_request_context():
+        everything = core.unique(core.visible(core.enrich(core.scan())))
+        for seed in range(5):
+            assert sid not in {v["id"] for v in pages.recommend(core.get_rec(ids["clip.ts"]), everything, random.Random(seed))}
+    client.post("/folder_hidden", data={"folder_path": extra, "hidden": "0"})
+    assert sid in client.get("/").get_data(as_text=True)
+    client.post("/remove_folder", data={"folder_path": extra})
+    assert extra not in core.load_config().get("hidden_folders", [])
+
+
+def test_hide_subfolder_from_home(client, ids):
+    import os, shutil, tempfile
+    from otube import core
+    extra = tempfile.mkdtemp(prefix="otube-hidesub-")
+    lib = os.path.dirname(core.get_rec(ids["clip.ts"])["path"])
+    os.makedirs(os.path.join(extra, "Season 1", "Extras"))
+    shutil.copy(os.path.join(lib, "old.avi"), os.path.join(extra, "Season 1", "ep1.avi"))
+    shutil.copy(os.path.join(lib, "old.avi"), os.path.join(extra, "Season 1", "Extras", "bts.avi"))
+    shutil.copy(os.path.join(lib, "old.avi"), os.path.join(extra, "top.avi"))
+    cfg = core.load_config(); cfg["video_folders"].append(extra); core.save_config(cfg); core.rescan_now()
+    ep1, bts, top = (core.vid_id(os.path.join(extra, *p)) for p in (("Season 1", "ep1.avi"), ("Season 1", "Extras", "bts.avi"), ("top.avi",)))
+    page = lambda **q: client.get("/", query_string=q).get_data(as_text=True)  # noqa: E731
+    assert client.post("/folder_hidden", data={"folder_path": extra, "sub": "Season 1/Extras", "hidden": "1"}).get_json()["ok"]
+    home, parent, inside = page(), page(folder=extra), page(folder=extra, sub="Season 1/Extras")
+    assert top in home and ep1 in home and bts not in home          # off Home
+    assert ep1 in parent and bts not in parent                       # off its parent folder too
+    assert bts not in inside and 'data-sub="Season 1/Extras"' in inside   # opening it: hidden, offers to show it
+    assert 'data-hidden="1" data-hidden-by="" data-folder' in home                     # marked in the sidebar
+    assert client.post("/folder_hidden", data={"folder_path": extra, "sub": "../x", "hidden": "1"}).status_code == 400
+    client.post("/folder_hidden", data={"folder_path": extra, "hidden": "1"})      # hide the whole folder
+    home = page()
+    assert top not in home and ep1 not in home and bts not in home                # everything inside goes
+    assert 'data-hidden="2" data-hidden-by=' in home                              # subfolders show they follow it
+    assert ep1 not in page(folder=extra, sub="Season 1")                          # hidden until shown again
+    client.post("/remove_folder", data={"folder_path": extra})
+    assert not core.load_config().get("hidden_folders")              # forgotten with the folder
+
+
+# ---- GOM mode ----
+def test_gom_hands_file_to_helper(client, ids):
+    from otube import core
+    d = client.post(f"/gom/{ids['clip.ts']}").get_json()
+    assert d["ok"] and d["delegate"] == core.get_rec(ids["clip.ts"])["host_path"]
+    assert client.post("/gom/" + "0" * 32).status_code == 404
+    assert b'id="gom-toggle"' in client.get("/").data
+
+
+def test_bulk_delete_to_recycle_bin(client, ids):
+    import os
+    from otube import core
+    vid = ids["clip.ts"]
+    rec = core.get_rec(vid)
+    client.post(f"/api/rate/{vid}", json={"rating": "like"})
+    d = client.post("/delete_many", data={"vid": [vid, "0" * 32]}).get_json()
+    assert d["delegate"] == [{"id": vid, "path": rec["host_path"]}]        # helper does the recycling
+    assert client.post("/delete_many", data={"vid": vid, "done": "1"}).get_json()["deleted"] == []  # still there
+    data = open(rec["path"], "rb").read()
+    os.remove(rec["path"])                                                   # what the helper does
+    assert client.post("/delete_many", data={"vid": vid, "done": "1"}).get_json()["deleted"] == [vid]
+    assert vid not in core.find_playlist(core.load_playlists(), core.LIKED_ID)["items"]
+    assert b'id="sel-delete"' in client.get("/").data
+    open(rec["path"], "wb").write(data); core.rescan_now()                   # put it back for other tests
+
+
+def test_bulk_thumbnails(client, ids):
+    from otube import core
+    vids = [ids["clip.ts"]]
+    rec = core.get_rec(vids[0])
+    dur = core.probe_duration(rec["path"], rec["mtime"])
+    d = client.post("/api/thumbs", json={"vids": vids + ["0" * 32], "sample": True}).get_json()
+    assert d["count"] == 1 and d["sample"] == vids
+    d = client.post("/api/thumbs", json={"vids": vids, "pct": 50}).get_json()
+    t = core.load_config()["thumbs"][vids[0]]
+    assert d["count"] == 1 and abs(t - min(dur / 2, dur - .5)) < .02 and d["srcs"][vids[0]].endswith(f"?at={t:g}")
+    assert client.get(f"/thumb/{vids[0]}/frame?pct=50&fast=1").status_code == 200
+    client.post("/api/thumbs", json={"vids": vids, "random": True, "seed": 7})
+    t1 = core.load_config()["thumbs"][vids[0]]
+    assert .1 * dur - .01 <= t1 <= .9 * dur + .01
+    client.post("/api/thumbs", json={"vids": vids, "random": True, "seed": 7})
+    assert core.load_config()["thumbs"][vids[0]] == t1          # same seed -> the spot that was previewed
+    assert client.get(f"/thumb/{vids[0]}/frame?seed=7&fast=1").status_code == 200
+    n = client.post("/api/thumbs", json={"folder": rec["folder"], "sample": True}).get_json()["count"]
+    assert n >= 1
+    assert client.post("/api/thumbs", json={"folder": rec["folder"], "reset": True}).get_json()["count"] == n
+    assert vids[0] not in core.load_config().get("thumbs", {})
+    assert b'id="sel-thumbs"' in client.get("/").data
+
+
+def test_review_videos(client, ids):
+    from otube import core
+    vid = ids["clip.ts"]
+    rec = core.get_rec(vid)
+    assert b"Review videos" in client.get("/review").data
+    every = client.get("/api/review").get_json()["videos"]
+    assert vid in {v["id"] for v in every}
+    row = next(v for v in every if v["id"] == vid)
+    assert row["path"] == rec["host_path"] and row["size"] == rec["size"] and "folder" in row and "dur" in row
+    inside = client.get("/api/review", query_string={"path": rec["folder"]}).get_json()["videos"]
+    assert vid in {v["id"] for v in inside} and len(inside) <= len(every)
+    assert client.get("/api/review", query_string={"path": "/nowhere"}).get_json()["videos"] == []
+    picked = client.post("/api/review", json={"vids": [vid, "0" * 32]}).get_json()["videos"]
+    assert [v["id"] for v in picked] == [vid]
+    # a folder hidden from Home is left out here too
+    client.post("/folder_hidden", data={"folder_path": rec["folder"], "hidden": "1"})
+    assert vid not in {v["id"] for v in client.get("/api/review").get_json()["videos"]}
+    client.post("/folder_hidden", data={"folder_path": rec["folder"], "hidden": "0"})
+    # "Use as thumbnail" from a frame: that far into the video
+    dur = core.probe_duration(rec["path"], rec["mtime"])
+    d = client.post(f"/api/thumb/{vid}", json={"pct": 50}).get_json()
+    assert d["ok"] and abs(d["t"] - min(dur / 2, dur - .5)) < .02
+    client.post(f"/api/thumb/{vid}", json={"t": None})
+    assert b'id="sel-review"' in client.get("/").data
+    client.post(f"/api/rate/{vid}", json={"rating": "dislike"})
+    assert client.post("/api/review", json={"vids": [vid]}).get_json()["videos"][0]["rating"] == "dislike"
+    client.post(f"/api/rate/{vid}", json={"rating": "none"})
+    assert client.post("/api/review", json={"vids": [vid]}).get_json()["videos"][0]["rating"] == ""

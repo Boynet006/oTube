@@ -7,6 +7,7 @@
   {% include "_head.html" %}
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
   <script>window.OTUBE = {{ app_settings|tojson }};</script>
+  <style>:root { --sel-reach: {{ app_settings.selectReach|int }}px; }</style>
   <script>/* apply the app-wide display setting before first paint (no bright flash) */
   (function () { try { var d = JSON.parse(localStorage.getItem("otube.display") || "null") || (window.OTUBE || {}).display || {}, r = document.documentElement;
     var b = d.b || 1, c = d.c || 1;
@@ -15,7 +16,7 @@
     r.style.setProperty("--app-warm", (d.n ? (d.w == null ? 50 : d.w) / 100 * 0.45 : 0).toFixed(3)); if (d.n) r.classList.add("app-night"); } catch (e) {} })();</script>
 </head>
 <body>
-  <header class="topbar{% for k in ('topBrightness', 'topMini', 'topMode') %}{% if not app_settings[k] %} hide-{{ k }}{% endif %}{% endfor %}" data-tasks="{{ app_settings.topTasks }}">
+  <header class="topbar{% for k in ('topBrightness', 'topMini', 'topGom', 'topMode') %}{% if not app_settings[k] %} hide-{{ k }}{% endif %}{% endfor %}" data-tasks="{{ app_settings.topTasks }}">
     <div class="topbar__left">
       <button id="menu-toggle" class="icon-btn" title="Menu" aria-label="Menu">
         <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M3 6h18v2H3V6m0 5h18v2H3v-2m0 5h18v2H3v-2Z"/></svg>
@@ -38,6 +39,8 @@
       </div>
       <button type="button" class="mode-btn mini-toggle" id="mini-toggle" aria-pressed="false"
               title="Mini player: play videos in a small player without leaving this page"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M19 11h-8v6h8v-6zm4 8V4.98C23 3.88 22.1 3 21 3H3a2 2 0 0 0-2 1.98V19c0 1.1.9 2 2 2h18a2 2 0 0 0 2-2zm-2 .02H3V4.97h18v14.05z"/></svg><span>Mini player</span></button>
+      <button type="button" class="mode-btn mini-toggle gom-toggle" id="gom-toggle" aria-pressed="false"
+              title="GOM Player: clicking a video plays it in GOM Player on this PC instead of here"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M21 3H3a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h5v2h8v-2h5a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2zm0 14H3V5h18v12zm-11-2 6-4-6-4v8z"/></svg><span>GOM</span></button>
       <button type="button" class="mode-btn {{ 'on' if private_on }}" id="mode-btn"
               data-private="{{ '1' if private_on else '0' }}" data-pin="{{ '1' if has_pin else '0' }}"
               title="{{ 'Private mode: showing only private folders. Click to go back to Family mode.' if private_on else 'Family mode: showing only public folders. Click to switch to Private mode.' }}">
@@ -57,7 +60,7 @@
         {% set fname = f.rstrip('/').split('/')[-1] or f %}
         <span class="chip-wrap" data-folder="{{ f }}" data-host="{{ f|host_path }}" data-name="{{ fname }}"
               data-private="{{ '1' if f in private_set else '0' }}" data-first="{{ '1' if loop.first }}" data-last="{{ '1' if loop.last }}">
-        <a class="chip {{ 'active' if current_folder == f }}{{ ' private' if f in private_set }}" href="?folder={{ f|urlencode }}{{ '&sort=' ~ sort if sort and sort!='name' else '' }}">{{ fname }} <span class="chip__n">{{ folder_trees[f].count if f in folder_trees else 0 }}</span></a>
+        <a class="chip {{ 'active' if current_folder == f }}{{ ' private' if f in private_set }}{{ ' hidden-home' if f in hidden_set }}" href="?folder={{ f|urlencode }}{{ '&sort=' ~ sort if sort and sort!='name' else '' }}">{{ fname }} <span class="chip__n">{{ folder_trees[f].count if f in folder_trees else 0 }}</span></a>
         <button type="button" class="row-more chip-more" aria-label="More actions for {{ fname }}" aria-haspopup="menu" title="More actions"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M12 16.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3zm0-6a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3zm0-6a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3z"/></svg></button></span>
         {% endfor %}
       </div>
@@ -153,8 +156,9 @@
 
       {% if videos %}
       <div class="grid" id="grid"{% if playlist %} data-playlist="{{ playlist.id }}"{% endif %}>
+        {% set rated = ratings() %}
         {% for v in videos %}
-        <div class="card" data-title="{{ v.title|lower }}" data-id="{{ v.id }}" data-dur="{{ v.dur_secs }}"
+        <div class="card" data-title="{{ v.title|lower }}" data-id="{{ v.id }}" data-dur="{{ v.dur_secs }}" data-rate="{{ rated.get(v.id, '') }}"
              data-native="{{ '1' if v.native else '0' }}" data-name="{{ v.title }}" data-path="{{ v.host_path }}" data-ext="{{ v.ext[1:] }}">
           <button type="button" class="card__check" aria-label="Select video" aria-pressed="false" title="Select"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg></button>
           <a class="thumb" href="/watch/{{ v.id }}{{ '?list=' ~ playlist.id if playlist else '' }}">
@@ -170,6 +174,10 @@
               <div class="card__channel">{{ v.folder_name }}</div>
               <div class="card__sub">added {{ v.added }} · {{ v.duration }}{% if not v.native %} · {{ v.ext[1:]|upper }}{% endif %}</div>
             </a>
+            <div class="card__rate" role="group" aria-label="Rate this video">
+              <button type="button" class="rate-btn" data-r="like" title="I like this" aria-label="Like"><span class="r-off"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M18.77 11h-4.23l1.52-4.94C16.38 5.03 15.54 4 14.38 4c-.58 0-1.14.24-1.52.65L7 11H3v10h4h1h9.43c1.06 0 1.98-.67 2.23-1.61l1.29-6C21.27 12.15 20.22 11 18.77 11zM7 20H4v-8h3v8zm12.98-6.83-1.29 6c-.08.35-.47.83-1.26.83H8v-8.61l5.6-6.06c.19-.21.48-.33.78-.33.26 0 .5.11.63.3.07.1.15.26.09.47l-1.52 4.94-.4 1.29h5.58c.41 0 .8.17 1.03.46.13.15.26.4.19.71z"/></svg></span><span class="r-on"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M3 11h3v10H3V11zm15.77 0h-4.23l1.52-4.94C16.38 5.03 15.54 4 14.38 4c-.58 0-1.14.24-1.52.65L7 11v10h10.43c1.06 0 1.98-.67 2.23-1.61l1.29-6C21.27 12.15 20.22 11 18.77 11z"/></svg></span></button>
+              <button type="button" class="rate-btn" data-r="dislike" title="I dislike this" aria-label="Dislike"><span class="r-off"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><g transform="rotate(180 12 12)"><path fill="currentColor" d="M18.77 11h-4.23l1.52-4.94C16.38 5.03 15.54 4 14.38 4c-.58 0-1.14.24-1.52.65L7 11H3v10h4h1h9.43c1.06 0 1.98-.67 2.23-1.61l1.29-6C21.27 12.15 20.22 11 18.77 11zM7 20H4v-8h3v8zm12.98-6.83-1.29 6c-.08.35-.47.83-1.26.83H8v-8.61l5.6-6.06c.19-.21.48-.33.78-.33.26 0 .5.11.63.3.07.1.15.26.09.47l-1.52 4.94-.4 1.29h5.58c.41 0 .8.17 1.03.46.13.15.26.4.19.71z"/></g></svg></span><span class="r-on"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><g transform="rotate(180 12 12)"><path fill="currentColor" d="M3 11h3v10H3V11zm15.77 0h-4.23l1.52-4.94C16.38 5.03 15.54 4 14.38 4c-.58 0-1.14.24-1.52.65L7 11v10h10.43c1.06 0 1.98-.67 2.23-1.61l1.29-6C21.27 12.15 20.22 11 18.77 11z"/></g></svg></span></button>
+            </div>
             <button class="card__more" title="More actions" aria-label="More actions">⋮</button>
           </div>
         </div>
@@ -183,15 +191,27 @@
         {% if playlist %}
         <button type="button" class="selbar__btn danger" id="sel-remove" data-pid="{{ playlist.id }}">Remove from playlist</button>
         {% endif %}
+        <button type="button" class="selbar__btn danger" id="sel-delete" title="Move the selected videos to the Recycle Bin">Delete</button>
         <button type="button" class="selbar__btn" id="sel-watched" title="Mark the selected videos as watched">✓ Watched</button>
         <button type="button" class="selbar__btn" id="sel-unwatched" title="Mark the selected videos as unwatched">Unwatched</button>
+        <button type="button" class="selbar__btn" id="sel-review" title="See frames from across the selected videos">Review</button>
+        <button type="button" class="selbar__btn" id="sel-thumbs" title="Change the thumbnails of the selected videos">Thumbnails</button>
         <button type="button" class="selbar__btn primary" id="sel-save">
           <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M3 6h12v2H3zm0 4h12v2H3zm0 4h8v2H3zm14 0v-3h-2v3h-3v2h3v3h2v-3h3v-2z"/></svg>
           Save to playlist</button>
       </div>
       <div class="empty" id="no-results" hidden>No videos match your search.</div>
       {% else %}
+      {% if hidden_view %}
+      <div class="empty empty--hidden">
+        <svg viewBox="0 0 24 24" width="48" height="48" aria-hidden="true"><path fill="currentColor" d="M12 7a5 5 0 0 1 5 5c0 .65-.13 1.26-.36 1.83l2.92 2.92A11.8 11.8 0 0 0 23 12c-1.73-4.39-6-7.5-11-7.5-1.4 0-2.74.25-3.98.7l2.16 2.16A4.86 4.86 0 0 1 12 7zM2 4.27l2.28 2.28.46.46A11.8 11.8 0 0 0 1 12c1.73 4.39 6 7.5 11 7.5 1.55 0 3.03-.3 4.38-.84l.42.42L19.73 22 21 20.73 3.27 3 2 4.27z"/></svg>
+        <p>“{{ hidden_view.rstrip('/').split('/')[-1] }}” is hidden, so its videos don’t show anywhere.</p>
+        <button type="button" class="btn-primary" id="unhide-btn" data-folder="{{ current_folder }}"
+                data-sub="{{ hidden_view[current_folder.rstrip('/')|length + 1:] if hidden_view != current_folder.rstrip('/') else '' }}">Show on Home</button>
+      </div>
+      {% else %}
       <div class="empty">{% if playlist %}This playlist is empty. Use ⋮ → “Save to playlist…” on any video to add it.{% else %}No videos found. Add a folder in the sidebar to get started.{% endif %}</div>
+      {% endif %}
       {% endif %}
     </main>
   </div>
@@ -211,22 +231,7 @@
     </div>
   </div>
 
-  <div class="ctx-menu" id="ctx-menu" hidden>
-    <button data-act="save">Save to playlist…</button>
-    {% if playlist %}
-    <button data-act="pl-up">Move up</button>
-    <button data-act="pl-down">Move down</button>
-    <button data-act="pl-remove">Remove from playlist</button>
-    {% endif %}
-    <div class="ctx-sep"></div>
-    <button data-act="reveal">Show in folder</button>
-    <button data-act="open">Open in player</button>
-    <button data-act="copy">Copy path</button>
-    <button data-act="rename">Rename…</button>
-    <button data-act="thumb">Change thumbnail…</button>
-    <button data-act="mark">Mark as watched</button>
-    <button data-act="delete" class="danger">Delete from disk</button>
-  </div>
+  {% set ctx_page = "home" %}{% include "_ctx_menu.html" %}
 
   <script src="{{ url_for('static', filename='stream.js') }}"></script>
   <script src="{{ url_for('static', filename='script.js') }}"></script>

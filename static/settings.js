@@ -85,18 +85,37 @@
       n.focus(); pick(n);
     });
   });
-  var tpCard = document.getElementById("tp-card");
+  var tpCard = document.getElementById("tp-card"), spDemo = document.getElementById("sp-demo");
   root.querySelectorAll("input[type=range][data-k]").forEach(function (el) {
     var k = el.getAttribute("data-k"), scale = +el.getAttribute("data-scale") || 1, unit = el.getAttribute("data-unit") || "";
-    var out = el.parentElement.querySelector("output");
+    var out = el.parentElement.querySelector("output"), box = el.parentElement.querySelector(".sr-num input");
     var fill = function () { el.style.setProperty("--fill", ((el.value - el.min) / (el.max - el.min) * 100) + "%"); };
     fill();
     el.addEventListener("input", function () {
       fill(); if (out) out.textContent = el.value + unit;
+      if (box && document.activeElement !== box) { box.value = el.value; box.parentElement.classList.remove("bad"); }
+      if (k === "selectReach" && spDemo) spDemo.style.setProperty("--sel-reach", el.value + "px");
       if (k.indexOf("display.") === 0) { setv(k, el.value / scale); applyDisplay(); }
       if (k === "thumbw" && tpCard) tpCard.style.width = Math.round(el.value * 0.42) + "px";
     });
     el.addEventListener("change", function () { save(k, el.value / scale); });
+    if (box) {   // typed value: preview while typing, clamp + save on Enter / leaving the box
+      var lo = +el.min, hi = +el.max, valid = function () { return box.value !== "" && isFinite(box.value); };
+      box.addEventListener("input", function () {
+        var ok = valid() && +box.value >= lo && +box.value <= hi;
+        box.parentElement.classList.toggle("bad", !ok);
+        if (ok) { el.value = box.value; el.dispatchEvent(new Event("input")); }
+      });
+      box.addEventListener("change", function () {
+        var v = valid() ? Math.min(hi, Math.max(lo, Math.round(+box.value / (+el.step || 1)) * (+el.step || 1))) : +el.value;
+        box.value = v; box.parentElement.classList.remove("bad");
+        el.value = v; el.dispatchEvent(new Event("input")); el.dispatchEvent(new Event("change"));
+      });
+      box.addEventListener("keydown", function (e) {
+        if (e.key === "Enter") box.blur();
+        else if (e.key === "Escape") { box.value = el.value; box.parentElement.classList.remove("bad"); box.blur(); }
+      });
+    }
     if (k === "thumbw" && tpCard) tpCard.style.width = Math.round(el.value * 0.42) + "px";
   });
 
@@ -216,7 +235,7 @@
 
   // ---- top bar: show the change right away ----
   var bar = document.querySelector(".topbar");
-  ["topBrightness", "topMini", "topMode"].forEach(function (k) {
+  ["topBrightness", "topMini", "topGom", "topMode"].forEach(function (k) {
     var t = document.querySelector('.tgl[data-k="' + k + '"]');
     if (t && bar) t.addEventListener("click", function () {
       setTimeout(function () { bar.classList.toggle("hide-" + k, !t.classList.contains("on")); }, 0);

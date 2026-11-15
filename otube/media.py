@@ -1,6 +1,8 @@
 """Playing videos: direct or converted live piece by piece, thumbnails, seek-bar frames, the background warmer."""
 import json
 import os
+import random
+import time
 import subprocess
 import threading
 from collections import OrderedDict
@@ -10,6 +12,7 @@ from flask import Response, abort, g, request, send_file
 from .core import (
     FFMPEG, FFPROBE, THUMB_DIR, _dur_cache, _dur_state, _save_dur_cache, _scan_state, allowed,
     app, cached_duration, get_rec, load_config, probe_duration, save_config, scan_hooks,
+    _inside, folder_path, hidden_folders, hidden_here, scan,
 )
 from .captions import LANG_NAMES, _file_subs
 
@@ -252,6 +255,10 @@ def thumb_frame(vid):
     if not allowed(r):
         abort(404)
     t = max(0.0, request.args.get("t", 0, type=float))
+    if "seed" in request.args:   # bulk thumbnail preview: this video's random spot
+        t = probe_duration(r["path"], r["mtime"]) * _random_spot(request.args["seed"], vid)
+    elif "pct" in request.args:   # ...or that far into the video
+        t = probe_duration(r["path"], r["mtime"]) * min(max(request.args.get("pct", 0, type=float), 0), 100) / 100
     fast = request.args.get("fast") == "1"
     key = (vid, round(t, 1), fast, r["mtime"])
     out = _frames.get(key)
@@ -266,7 +273,7 @@ def thumb_frame(vid):
         if not out:
             abort(404)
         _frames[key] = out
-        while len(_frames) > 800:   # ~10 MB
+        while len(_frames) > 3000:   # ~40 MB: a few pages of Review videos
             _frames.popitem(last=False)
     else:
         _frames.move_to_end(key)
@@ -278,13 +285,19 @@ _frames: "OrderedDict[tuple, bytes]" = OrderedDict()
 
 @app.route("/api/thumb/<vid>", methods=["GET", "POST"])
 def api_thumb(vid):
-    """GET: duration + chosen time. POST {t: seconds | null}: use that frame (null = default)."""
+    """GET: duration + chosen time. POST {t: seconds | null} or {pct: 0-100}: use that frame (null = default)."""
     r = get_rec(vid)
     if not allowed(r):
         abort(404)
     dur = probe_duration(r["path"], r["mtime"])
     if request.method == "POST":
-        t = (request.get_json(silent=True) or {}).get("t")
+        body = request.get_json(silent=True) or {}
+        t = body.get("t")
+        if body.get("pct") is not None:   # Review videos: "that far in"
+            try:
+                t = dur * min(max(float(body["pct"]), 0.0), 100.0) / 100
+            except (TypeError, ValueError):
+                return {"ok": False, "error": "bad position"}, 400
         cfg = load_config()
         thumbs = cfg.setdefault("thumbs", {})
         if t is None:
@@ -304,6 +317,52 @@ def api_thumb(vid):
             pass
         make_thumb(r)
     return {"ok": True, "dur": dur, "t": thumb_overrides().get(vid), "src": thumb_url(vid)}
+
+
+def _random_spot(seed, vid: str) -> float:
+    """Where (0.1-0.9 of its length) a video's random thumbnail is taken for this seed."""
+    return random.Random(f"{seed}:{vid}").uniform(.1, .9)
+
+
+@app.route("/api/thumbs", methods=["POST"])
+def api_thumbs():
+    """Thumbnails for many videos at once: {vids: [...]} or {folder, sub}, plus one of
+    {sample: true} (the ids, to preview on), {pct: 0-100} (that far into each video),
+    {random: true, seed} (a different spot in each) or {reset: true} (back to the default)."""
+    d = request.get_json(silent=True) or {}
+    if d.get("folder"):
+        top, hid = folder_path(d["folder"], d.get("sub") or ""), hidden_folders()
+        recs = [r for r in scan() if allowed(r) and not hidden_here(r, hid)
+                and _inside(folder_path(r["folder"], r.get("subdir", "")), top)]
+    else:
+        recs = [r for r in (get_rec(v) for v in d.get("vids") or []) if allowed(r)]
+    if d.get("sample"):
+        return {"ok": True, "count": len(recs), "sample": [r["id"] for r in recs]}
+    try:
+        pct = min(max(float(d.get("pct", 30)), 0.0), 100.0)
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "bad position"}, 400
+    cfg = load_config()
+    thumbs, srcs, stamp = cfg.setdefault("thumbs", {}), {}, int(time.time())
+    for r in recs:
+        vid = r["id"]
+        if d.get("reset"):
+            thumbs.pop(vid, None)
+            srcs[vid] = f"/thumb/{vid}?r={stamp}"
+        else:
+            dur = probe_duration(r["path"], r["mtime"])
+            if not dur:
+                continue
+            t = round(min(dur * (_random_spot(d.get("seed", stamp), vid) if d.get("random") else pct / 100), max(0.0, dur - .5)), 2)
+            thumbs[vid] = t
+            srcs[vid] = f"/thumb/{vid}?at={t:g}"
+        try:
+            os.remove(os.path.join(THUMB_DIR, vid + ".jpg"))   # remade on demand / by the warmer
+        except OSError:
+            pass
+    save_config(cfg)
+    _wake_warmer()
+    return {"ok": True, "count": len(srcs), "srcs": srcs}
 
 
 @app.route("/thumb/<vid>")

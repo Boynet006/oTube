@@ -2,9 +2,12 @@
   <div class="tree" role="group">
   {% for n in nodes %}
     {% set key = f ~ '|' ~ n.rel %}
+    {% set hb = hidden_by(f.rstrip('/') ~ '/' ~ n.rel, hidden_set) %}
+    {% set is_hid = hb != '' %}
+    {% set own_hid = hb == f.rstrip('/') ~ '/' ~ n.rel %}
     <div class="tree-node" data-key="{{ key }}">
-      <div class="nav-item sub {{ 'active' if current_folder == f and current_sub == n.rel }}" style="--depth: {{ depth }}"
-           data-folder="{{ f }}" data-sub="{{ n.rel }}" data-host="{{ f|host_path }}/{{ n.rel }}" data-name="{{ n.name }}">
+      <div class="nav-item sub {{ 'active' if current_folder == f and current_sub == n.rel }} {{ 'hidden-home' if is_hid }}" style="--depth: {{ depth }}"
+           data-hidden="{{ ('1' if own_hid else '2') if is_hid else '0' }}" data-hidden-by="{{ hb.rstrip('/').split('/')[-1] if is_hid and not own_hid }}" data-folder="{{ f }}" data-sub="{{ n.rel }}" data-host="{{ f|host_path }}/{{ n.rel }}" data-name="{{ n.name }}">
         {% if n.children %}<button type="button" class="tree-tog" aria-label="Expand {{ n.name }}" aria-expanded="false"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M10 6 8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/></svg></button>
         {% else %}<span class="tree-tog tree-tog--none"></span>{% endif %}
         <a href="/?folder={{ f|urlencode }}&sub={{ n.rel|urlencode }}{{ '&sort=' ~ sort if sort else '' }}" title="{{ n.rel }}">
@@ -12,6 +15,7 @@
           <span>{{ n.name }}</span>
         </a>
         <span class="nav-count">{{ n.count }}</span>
+        {% if own_hid %}<span class="priv-badge" title="Hidden from Home"><svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M12 7a5 5 0 0 1 5 5c0 .65-.13 1.26-.36 1.83l2.92 2.92A11.8 11.8 0 0 0 23 12c-1.73-4.39-6-7.5-11-7.5-1.4 0-2.74.25-3.98.7l2.16 2.16A4.86 4.86 0 0 1 12 7zM2 4.27l2.28 2.28.46.46A11.8 11.8 0 0 0 1 12c1.73 4.39 6 7.5 11 7.5 1.55 0 3.03-.3 4.38-.84l.42.42L19.73 22 21 20.73 3.27 3 2 4.27zM7.53 9.8l1.55 1.55A2.82 2.82 0 0 0 9 12a3 3 0 0 0 3 3c.22 0 .44-.03.65-.08l1.55 1.55A4.97 4.97 0 0 1 7 12c0-.79.2-1.53.53-2.2zm4.31-.78 3.15 3.15.02-.16a3 3 0 0 0-3-3l-.17.01z"/></svg></span>{% endif %}
         <button type="button" class="row-more" aria-label="More actions for {{ n.name }}" aria-haspopup="menu" title="More actions"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M12 16.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3zm0-6a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3zm0-6a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3z"/></svg></button>
       </div>
       {% if n.children %}{{ subtree(f, n.children, depth + 1) }}{% endif %}
@@ -31,19 +35,28 @@
         </a>
       </div>
       {% endif %}
-      <a class="nav-item {{ 'active' if not current_folder else '' }}" href="/">
+      <a class="nav-item {{ 'active' if not current_folder and not similar_page and not review_page else '' }}" href="/">
         <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>
         <span>Home</span>
+      </a>
+      <a class="nav-item {{ 'active' if similar_page }}" href="/similar" title="Find the same video saved more than once">
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M4 6H2v14a2 2 0 0 0 2 2h14v-2H4V6zm16-4H8a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2zm0 14H8V4h12v12zM12 5.5v9l6-4.5-6-4.5z"/></svg>
+        <span>Similar videos</span>
+      </a>
+      <a class="nav-item {{ 'active' if review_page }}" href="/review" title="See frames from across each video, to tell what it's about at a glance">
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M2 6h6v5H2zm7 0h6v5H9zm7 0h6v5h-6zM2 13h6v5H2zm7 0h6v5H9zm7 0h6v5h-6z"/></svg>
+        <span>Review videos</span>
       </a>
       <div class="nav-divider"></div>
       <div class="nav-label">Folders</div>
       {% for f in folders %}
       {% set is_priv = f in private_set %}
+      {% set is_hid = f in (hidden_set or ()) %}
       {% set tree = (folder_trees or {}).get(f) %}
       <div class="tree-node tree-root" data-key="{{ f }}|">
-      <div class="nav-item folder {{ 'active' if current_folder == f and not current_sub else '' }} {{ 'private' if is_priv }}"
+      <div class="nav-item folder {{ 'active' if current_folder == f and not current_sub else '' }} {{ 'private' if is_priv }} {{ 'hidden-home' if is_hid }}"
            data-folder="{{ f }}" data-host="{{ f|host_path }}" data-name="{{ f.rstrip('/').split('/')[-1] or f }}"
-           data-private="{{ '1' if is_priv else '0' }}" data-first="{{ '1' if loop.first }}" data-last="{{ '1' if loop.last }}">
+           data-private="{{ '1' if is_priv else '0' }}" data-hidden="{{ '1' if is_hid else '0' }}" data-first="{{ '1' if loop.first }}" data-last="{{ '1' if loop.last }}">
         {% if tree and tree.children %}<button type="button" class="tree-tog" aria-label="Expand folder" aria-expanded="false"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M10 6 8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/></svg></button>
         {% else %}<span class="tree-tog tree-tog--none"></span>{% endif %}
         <a href="/?folder={{ f|urlencode }}{{ '&sort=' ~ sort if sort else '' }}" title="{{ f }}">
@@ -51,6 +64,7 @@
           <span>{{ f.rstrip('/').split('/')[-1] or f }}</span>
         </a>
         {% if tree %}<span class="nav-count">{{ tree.count }}</span>{% endif %}
+        {% if is_hid %}<span class="priv-badge" title="Hidden from Home"><svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M12 7a5 5 0 0 1 5 5c0 .65-.13 1.26-.36 1.83l2.92 2.92A11.8 11.8 0 0 0 23 12c-1.73-4.39-6-7.5-11-7.5-1.4 0-2.74.25-3.98.7l2.16 2.16A4.86 4.86 0 0 1 12 7zM2 4.27l2.28 2.28.46.46A11.8 11.8 0 0 0 1 12c1.73 4.39 6 7.5 11 7.5 1.55 0 3.03-.3 4.38-.84l.42.42L19.73 22 21 20.73 3.27 3 2 4.27zM7.53 9.8l1.55 1.55A2.82 2.82 0 0 0 9 12a3 3 0 0 0 3 3c.22 0 .44-.03.65-.08l1.55 1.55A4.97 4.97 0 0 1 7 12c0-.79.2-1.53.53-2.2zm4.31-.78 3.15 3.15.02-.16a3 3 0 0 0-3-3l-.17.01z"/></svg></span>{% endif %}
         {% if is_priv %}<span class="priv-badge" title="Private folder: hidden in Family mode"><svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M12 2a5 5 0 0 0-5 5v3H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2h-1V7a5 5 0 0 0-5-5zm-3 8V7a3 3 0 0 1 6 0v3H9z"/></svg></span>{% endif %}
         <button type="button" class="row-more" aria-label="More actions for this folder" aria-haspopup="menu" title="More actions"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M12 16.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3zm0-6a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3zm0-6a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3z"/></svg></button>
       </div>

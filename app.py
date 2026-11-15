@@ -9,12 +9,12 @@ converted is stored.
 
 Run: python app.py (port 8700). The code lives in the otube/ package:
 core (config, modes, scan) -> captions -> media (playback, thumbnails) ->
-progress -> library -> pages. Each module registers its own routes.
+progress -> library -> pages, plus similar (the Similar videos finder) and review (Review videos). Each module registers its own routes.
 """
-from otube import captions, core, library, media, pages, progress
+from otube import captions, core, library, media, pages, progress, review, similar
 from otube.core import _load_dur_cache, app, rescan_async
 
-MODULES = (core, captions, media, progress, library, pages)   # importing them registers the routes
+MODULES = (core, captions, media, progress, library, pages, similar, review)   # importing them registers the routes
 
 if __name__ == "__main__":
     _load_dur_cache()  # warm durations from last run -> instant first page load
